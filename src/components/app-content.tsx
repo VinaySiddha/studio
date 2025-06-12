@@ -16,15 +16,13 @@ import {
   handleDocumentUploadAction,
   deleteDocumentAction
 } from '@/app/actions';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'; // Removed AlertDialogTrigger as it's managed internally now
 import type { User } from '@/app/page';
-import { Button } from '@/components/ui/button';
-import { Trash2, MessageSquareText, BookOpenText } from 'lucide-react';
-
+// Removed Button, Trash2, MessageSquareText, BookOpenText as they are not directly used here, but in child components
 
 export interface DocumentFile {
-  name: string; // This should be the original_filename for display
-  securedName: string; // This is the filename Flask uses (e.g., with UUID)
+  name: string; // Original filename for display
+  securedName: string; // Secured filename (e.g., with UUID) for API calls
 }
 
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
@@ -54,7 +52,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [chatMode, setChatMode] = useState<ChatMode>('general');
   const [docToDelete, setDocToDelete] = useState<DocumentFile | null>(null);
 
-
   const { toast } = useToast();
 
   const fetchDocuments = async () => {
@@ -67,35 +64,24 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           setAnalysisStatusText(`Error: ${result.error}`);
           setUploadedDocs([]);
         } else {
-          // Assuming Flask returns original_filename for display and we need to map/store it
-          // For now, assuming listDocumentsAction returns an array of {name: original_filename, securedName: secured_filename}
-          // This part needs alignment with what Flask actually returns for /documents
-          // Let's assume Flask returns a list of original_filenames and we use that for display,
-          // but for actions, we'll need the securedName. This needs refinement.
-          // For now, if Flask's /documents returns original_filename:
-          const docs: DocumentFile[] = (result.uploaded_files || []).map((name: any) => {
-            // If Flask returns objects with original and secured names:
-            if (typeof name === 'object' && name.original_filename && name.filename) {
-              return { name: name.original_filename, securedName: name.filename };
-            }
-            // If Flask returns just original_filenames, we can't easily get securedName here
-            // This part of the logic is simplified and needs to be robust based on actual Flask response
-            return { name: name as string, securedName: name as string }; // Placeholder if only name is returned
-          });
+          // Expecting result.uploaded_files to be DocumentFile[]
+          const docs: DocumentFile[] = result.uploaded_files || [];
           setUploadedDocs(docs);
 
           if (docs.length === 0) {
             setAnalysisStatusText("No documents found on server. Upload a file.");
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
-            setChatMode('general');
+            if (chatMode === 'document') setChatMode('general');
           } else {
             setAnalysisStatusText("Select a document and utility type.");
-            // If a document was previously selected, try to keep it selected
             if (selectedDocSecuredName && !docs.find(d => d.securedName === selectedDocSecuredName)) {
-                setSelectedDocSecuredName(null); // Previously selected doc no longer exists
+                setSelectedDocSecuredName(null); 
                 setSelectedDocOriginalName(null);
-                if (chatMode === 'document') setChatMode('general'); // Switch to general if doc is gone
+                if (chatMode === 'document') setChatMode('general');
+            } else if (!selectedDocSecuredName && docs.length > 0) {
+                // Optionally auto-select first document if none is selected
+                // handleSelectDocument(docs[0].securedName); 
             }
           }
         }
@@ -108,6 +94,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   useEffect(() => {
     fetchDocuments();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.token]);
 
 
@@ -132,12 +119,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setUploadStatusText(`Successfully uploaded ${result.original_filename}.`);
       toast({ title: "Document Uploaded", description: `${result.original_filename} processed. KB: ${result.vector_count ?? 'N/A'}` });
       
-      await fetchDocuments(); // Refresh document list
+      await fetchDocuments(); 
 
-      // Optionally auto-select the new document
-      setSelectedDocSecuredName(result.filename);
+      setSelectedDocSecuredName(result.filename); // securedName from Flask is 'filename'
       setSelectedDocOriginalName(result.original_filename);
-      setChatMode('document'); // Switch to document chat mode
+      setChatMode('document'); 
       
     } catch (error: any) {
       console.error("File upload error:", error);
@@ -153,26 +139,46 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     if (selected) {
       setSelectedDocSecuredName(selected.securedName);
       setSelectedDocOriginalName(selected.name);
-      setChatMode('document');
+      setChatMode('document'); // Default to document chat when a doc is selected
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and chat.` });
+    }
+  };
+
+  const handleToggleChatMode = () => {
+    if (chatMode === 'general') {
+      if (selectedDocSecuredName) {
+        setChatMode('document');
+        toast({ title: "Chat Mode Switched", description: `Now chatting about ${selectedDocOriginalName}.` });
+      } else {
+        toast({ variant: "default", title: "Select Document", description: "Please select a document to switch to document chat mode." });
+      }
+    } else {
+      setChatMode('general');
+      toast({ title: "Chat Mode Switched", description: "Now in general chat mode." });
     }
   };
   
   const handleConfirmDeleteDocument = async () => {
     if (!docToDelete || !user.token) return;
-    toast({ title: `Deleting ${docToDelete.name}...` });
-    const result = await deleteDocumentAction(user.token, docToDelete.securedName);
-    if (result.success) {
-      toast({ title: "Document Deleted", description: `${docToDelete.name} has been deleted.` });
-      setUploadedDocs(prev => prev.filter(d => d.securedName !== docToDelete.securedName));
-      if (selectedDocSecuredName === docToDelete.securedName) {
-        setSelectedDocSecuredName(null);
-        setSelectedDocOriginalName(null);
-        setChatMode('general');
-      }
-    } else {
-      toast({ variant: "destructive", title: "Deletion Failed", description: result.error });
+    const docNameForToast = docToDelete.name;
+    toast({ title: `Deleting ${docNameForToast}...` });
+    try {
+        const result = await deleteDocumentAction(user.token, docToDelete.securedName);
+        if (result.success) {
+          toast({ title: "Document Deleted", description: `${docNameForToast} has been deleted.` });
+          setUploadedDocs(prev => prev.filter(d => d.securedName !== docToDelete.securedName));
+          if (selectedDocSecuredName === docToDelete.securedName) {
+            setSelectedDocSecuredName(null);
+            setSelectedDocOriginalName(null);
+            setChatMode('general');
+            setAnalysisStatusText("Document deleted. Select another or upload.");
+          }
+        } else {
+          throw new Error(result.error || "Failed to delete document from server.");
+        }
+    } catch (error: any) {
+         toast({ variant: "destructive", title: "Deletion Failed", description: error.message });
     }
     setDocToDelete(null);
   };
@@ -232,22 +238,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
 
-  const toggleChatMode = () => {
-    if (chatMode === 'general') {
-      if (selectedDocSecuredName) {
-        setChatMode('document');
-        toast({ title: "Chat Mode Switched", description: `Now chatting about ${selectedDocOriginalName}.` });
-      } else {
-        toast({ variant: "default", title: "Select Document", description: "Please select a document to switch to document chat mode." });
-      }
-    } else {
-      setChatMode('general');
-      toast({ title: "Chat Mode Switched", description: "Now in general chat mode." });
-    }
-  };
-
   const documentNameForChat = chatMode === 'document' ? selectedDocOriginalName : null;
-
 
   return (
     <>
@@ -268,7 +259,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             isDocumentSelected={!!selectedDocSecuredName}
             onDeleteDocument={(doc) => setDocToDelete(doc)}
             currentChatMode={chatMode}
-            onToggleChatMode={toggleChatMode}
+            onToggleChatMode={handleToggleChatMode}
             canToggleToDocumentMode={!!selectedDocSecuredName}
           />
         </div>
@@ -277,9 +268,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             documentName={documentNameForChat} 
             user={user}
             onClearDocumentContext={() => {
+              // This is called when "New Chat" is clicked in ChatTutorSection
               setSelectedDocSecuredName(null);
               setSelectedDocOriginalName(null);
-              if (chatMode === 'document') setChatMode('general');
+              setChatMode('general'); 
+              setAnalysisStatusText("New chat started. Select a document for utilities or document-specific chat.");
             }}
           />
         </div>

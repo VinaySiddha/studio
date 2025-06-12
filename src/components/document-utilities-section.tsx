@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { DocumentFile, ChatMode } from '@/components/app-content'; 
 import type { UtilityAction } from '@/components/app-content'; 
-import { Lightbulb, ListOrdered, Brain, Podcast, FileText, Loader2, Trash2, MessageSquareText, BookOpenText } from 'lucide-react';
+import { Lightbulb, ListOrdered, Brain, Podcast, FileText, Loader2, Trash2, MessageSquareText, BookOpenText, ToggleLeft, ToggleRight } from 'lucide-react';
 
 interface DocumentUtilitiesSectionProps {
   documents: DocumentFile[];
@@ -15,7 +15,7 @@ interface DocumentUtilitiesSectionProps {
   isLoading: Record<UtilityAction, boolean>;
   analysisStatusText: string;
   isDocumentSelected: boolean;
-  onDeleteDocument: (doc: DocumentFile) => void; // Callback to initiate deletion
+  onDeleteDocument: (doc: DocumentFile) => void;
   currentChatMode: ChatMode;
   onToggleChatMode: () => void;
   canToggleToDocumentMode: boolean;
@@ -75,7 +75,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
                 size="icon"
                 onClick={() => onDeleteDocument(selectedDocument)}
                 title={`Delete ${selectedDocument.name}`}
-                className="shrink-0 border-destructive text-destructive hover:bg-destructive/10"
+                className="shrink-0 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive-foreground btn-glow-primary-hover"
               >
                 <Trash2 size={16} />
               </Button>
@@ -89,12 +89,20 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
             onClick={onToggleChatMode} 
             variant="outline" 
             className="w-full btn-glow-primary-hover"
-            disabled={currentChatMode === 'document' ? false : !canToggleToDocumentMode && documents.length > 0}
-            title={currentChatMode === 'general' && !canToggleToDocumentMode && documents.length > 0 ? "Select a document to enable document chat" : "Toggle chat mode"}
+            disabled={currentChatMode === 'document' ? false : (!canToggleToDocumentMode && documents.length > 0)}
+            title={
+              currentChatMode === 'general' 
+                ? (canToggleToDocumentMode ? "Switch to Document Chat" : "Select a document to enable document chat") 
+                : "Switch to General Chat"
+            }
           >
-            {currentChatMode === 'general' ? <MessageSquareText className="mr-2 h-4 w-4" /> : <BookOpenText className="mr-2 h-4 w-4" />}
-            {currentChatMode === 'general' ? 'Switch to Document Chat' : 'Switch to General Chat'}
+            {currentChatMode === 'general' ? <ToggleLeft className="mr-2 h-4 w-4" /> : <ToggleRight className="mr-2 h-4 w-4 text-primary" />}
+            {currentChatMode === 'general' ? 'General Chat' : 'Document Chat'}
+            {currentChatMode === 'document' && selectedDocument ? <span className="ml-1 text-xs truncate max-w-[100px]">({selectedDocument.name})</span> : ''}
           </Button>
+          {currentChatMode === 'general' && !canToggleToDocumentMode && documents.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">Select a document to enable document-specific chat.</p>
+          )}
         </div>
 
 
@@ -138,7 +146,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
             </Button>
             </div>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">{analysisStatusText}</p>
+        <p className="mt-1 text-xs text-muted-foreground text-center">{analysisStatusText}</p>
       </CardContent>
     </Card>
   );

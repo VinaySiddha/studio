@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ChatMessage, { type Message as MessageType } from '@/components/chat-message';
-import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, XCircle, Edit3, Trash2 } from 'lucide-react';
+import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react'; // Added Check
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDFooter, AlertDialogHeader as AlertDHeader, AlertDialogTitle as AlertDTitle } from '@/components/ui/alert-dialog';
 import { 
   listChatThreadsAction, 
   getThreadHistoryAction, 
@@ -51,7 +52,6 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const [newThreadTitle, setNewThreadTitle] = useState("");
   const [threadToDelete, setThreadToDelete] = useState<Thread | null>(null);
 
-
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
@@ -59,14 +59,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const isBrowser = typeof window !== 'undefined';
   const isMediaRecorderSupported = isBrowser && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
-
   const fetchThreads = useCallback(async () => {
     if (!user.token) return;
     setIsLoadingThreads(true);
     try {
       const result = await listChatThreadsAction(user.token);
       if (result.error) throw new Error(result.error);
-      setAvailableThreads(result.threads || []);
+      setAvailableThreads(result.threads?.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime()) || []);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error Loading Sessions", description: error.message });
       setAvailableThreads([]);
@@ -89,7 +88,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       }]);
     }
     setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
-  }, [documentName]); // Reload history or update status if document context changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentName]);
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -146,7 +146,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     try {
       const requestBody = {
         query: query,
-        documentContent: documentName || "No document provided for context.",
+        documentContent: documentName || "No document provided for context.", // Use documentName prop
         threadId: currentThreadId,
         authToken: user.token, 
       };
@@ -258,7 +258,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
     setIsLoading(true);
     setChatStatusText("Starting new chat...");
-    onClearDocumentContext(); // Clear document context in parent
+    onClearDocumentContext(); 
     try {
       const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString());
       if (result.error || !result.thread_id) {
@@ -300,7 +300,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setIsLoading(true);
     setChatStatusText(`Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
     setMessages([]); 
-    onClearDocumentContext(); // Assume loading a thread resets to general mode until a document is selected for it.
+    onClearDocumentContext(); 
     try {
       const result = await getThreadHistoryAction(user.token, threadIdToLoad);
       if (result.error) throw new Error(result.error);
@@ -336,13 +336,14 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const handleRenameThread = async () => {
     if (!threadToRename || !newThreadTitle.trim() || !user.token) return;
     const oldTitle = threadToRename.title;
-    setThreadToRename(null); // Close rename input
+    const threadIdToUpdate = threadToRename.thread_id;
+    setThreadToRename(null); 
     toast({ title: `Renaming thread to "${newThreadTitle}"...` });
     try {
-      const result = await renameChatThreadAction(user.token, threadToRename.thread_id, newThreadTitle.trim());
+      const result = await renameChatThreadAction(user.token, threadIdToUpdate, newThreadTitle.trim());
       if (result.success) {
         toast({ title: "Thread Renamed", description: `"${oldTitle}" is now "${newThreadTitle}".` });
-        await fetchThreads(); // Refresh thread list
+        await fetchThreads(); 
       } else {
         throw new Error(result.error || "Failed to rename thread.");
       }
@@ -355,18 +356,20 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const handleDeleteThread = async () => {
     if (!threadToDelete || !user.token) return;
     const titleToDelete = threadToDelete.title;
-    setThreadToDelete(null); // Close confirmation
+    const idToDelete = threadToDelete.thread_id;
+    setThreadToDelete(null); 
     toast({ title: `Deleting thread "${titleToDelete}"...` });
     try {
-      const result = await deleteChatThreadAction(user.token, threadToDelete.thread_id);
+      const result = await deleteChatThreadAction(user.token, idToDelete);
       if (result.success) {
         toast({ title: "Thread Deleted", description: `"${titleToDelete}" has been deleted.` });
-        if (currentThreadId === threadToDelete.thread_id) {
+        if (currentThreadId === idToDelete) {
           setCurrentThreadId(null);
           localStorage.removeItem('aiTutorThreadId');
           setMessages([{id: 'deleted-thread-msg', sender: 'ai', text: "Current chat session was deleted. Start a new one or load another.", timestamp: new Date()}]);
+          onClearDocumentContext();
         }
-        await fetchThreads(); // Refresh thread list
+        await fetchThreads(); 
       } else {
         throw new Error(result.error || "Failed to delete thread.");
       }
@@ -390,29 +393,38 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // or audio/wav depending on backend
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size === 0) {
             toast({title: "No audio recorded.", variant: "warning"});
+            stream.getTracks().forEach(track => track.stop());
             return;
         }
         
         toast({title: "Transcribing audio..."});
+        setIsLoading(true); // Indicate loading for transcription
+        setChatStatusText("Transcribing audio...");
         const formData = new FormData();
-        formData.append('audio', audioBlob, 'user_audio.webm'); // filename can be anything
+        formData.append('audio', audioBlob, 'user_audio.webm'); 
         
         try {
-            const result = await transcribeAudioAction(user.token!, formData); // user.token should exist due to check above
+            if (!user.token) throw new Error("User token not found for transcription.");
+            const result = await transcribeAudioAction(user.token, formData);
             if (result.text) {
-                setInputValue(prev => prev + result.text);
+                setInputValue(prev => (prev ? prev + " " : "") + result.text);
                 toast({title: "Transcription complete."});
             } else if (result.error) {
                 throw new Error(result.error);
+            } else {
+                toast({title: "Empty transcription received.", variant: "warning"});
             }
         } catch (transcriptionError: any) {
             toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
+        } finally {
+            setIsLoading(false);
+            setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
         }
         
-        stream.getTracks().forEach(track => track.stop()); // Stop microphone access
+        stream.getTracks().forEach(track => track.stop());
       };
       mediaRecorderRef.current.start();
       setIsRecording(true);
@@ -421,6 +433,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       console.error("Error starting recording:", err);
       toast({title: "Microphone Error", description: "Could not access microphone.", variant: "destructive"});
       setChatStatusText("Mic access denied.");
+      setIsRecording(false); // Ensure recording state is reset
     }
   };
 
@@ -428,7 +441,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
+      // Status text will be updated by onstop handler or its finally block
     }
   };
 
@@ -470,12 +483,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                                <Input 
                                  defaultValue={thread.title} 
                                  onChange={(e) => setNewThreadTitle(e.target.value)} 
-                                 className="h-8 text-sm"
+                                 className="h-8 text-sm flex-grow"
                                  autoFocus
-                                 onKeyDown={(e) => e.key === 'Enter' && handleRenameThread()}
+                                 onKeyDown={(e) => {if(e.key === 'Enter') handleRenameThread()}}
                                 />
-                               <Button size="icon" variant="ghost" className="h-7 w-7 text-green-500" onClick={handleRenameThread}><Check className="h-4 w-4"/></Button>
-                               <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500" onClick={() => setThreadToRename(null)}><XCircle className="h-4 w-4"/></Button>
+                               <Button size="icon" variant="ghost" className="h-7 w-7 text-green-500 shrink-0" onClick={handleRenameThread} title="Confirm Rename"><Check className="h-4 w-4"/></Button>
+                               <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 shrink-0" onClick={() => setThreadToRename(null)} title="Cancel Rename"><XCircle className="h-4 w-4"/></Button>
                            </div>
                         ) : (
                           <>
@@ -485,7 +498,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                                 onClick={() => loadChatHistory(thread.thread_id)}
                             >
                                 <div className="flex flex-col">
-                                <span className="font-medium text-sm">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
+                                <span className="font-medium text-sm truncate max-w-[250px] sm:max-w-[300px] md:max-w-[350px]">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
                                 <span className="text-xs text-muted-foreground">
                                     Updated: {new Date(thread.last_updated).toLocaleString()}
                                 </span>
@@ -546,7 +559,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             onClick={isRecording ? stopRecording : startRecording}
             disabled={isLoading || !isMediaRecorderSupported || !user.token} 
             title={!user.token ? "Login to use voice" : (isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported")}
-            className={isRecording ? "text-destructive border-destructive" : ""}
+            className={isRecording ? "text-destructive border-destructive animate-pulse" : ""}
           >
             <Mic className="h-4 w-4" /> <span className="sr-only">Voice Input</span>
           </Button>
@@ -568,22 +581,21 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         </form>
       </CardFooter>
 
-      {/* Confirmation Dialog for Deleting Thread */}
       {threadToDelete && (
         <AlertDialog open={!!threadToDelete} onOpenChange={(open) => !open && setThreadToDelete(null)}>
             <AlertDialogContent className="glass-panel">
-            <AlertDialogHeader>
-                <AlertDialogTitle>Confirm Delete Session</AlertDialogTitle>
+            <AlertDHeader>
+                <AlertDTitle>Confirm Delete Session</AlertDTitle>
                 <AlertDialogDescription>
                 Are you sure you want to delete the chat session "{threadToDelete.title || `Session ${threadToDelete.thread_id.substring(0,8)}`}"? This action cannot be undone.
                 </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
+            </AlertDHeader>
+            <AlertDFooter>
                 <AlertDialogCancel onClick={() => setThreadToDelete(null)}>Cancel</AlertDialogCancel>
                 <AlertDialogAction onClick={handleDeleteThread} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 Delete
                 </AlertDialogAction>
-            </AlertDialogFooter>
+            </AlertDFooter>
             </AlertDialogContent>
         </AlertDialog>
       )}
