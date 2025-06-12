@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, type FC } from 'react';
+import { useState, type FC, useEffect } from 'react';
 import DocumentUploadSection from '@/components/document-upload-section';
 import DocumentUtilitiesSection from '@/components/document-utilities-section';
 import ChatTutorSection from '@/components/chat-tutor-section';
@@ -9,24 +9,26 @@ import HelpTooltip from '@/components/help-tooltip';
 import { useToast } from "@/hooks/use-toast";
 import { generateFaq, generateTopics, generateMindMap, generatePodcastScript } from '@/app/actions';
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import type { User } from '@/app/page'; // Assuming User type is exported from page.tsx
+import type { User } from '@/app/page';
 
 export interface DocumentFile {
   name: string;
-  content: string; // For now, keep content client-side. Future: might be ID if backend stores files.
+  content: string; 
   type: string;
 }
 
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
 
 interface AppContentProps {
-  user: User; // The logged-in user
+  user: User;
 }
 
 const AppContent: FC<AppContentProps> = ({ user }) => {
   const [uploadedDocs, setUploadedDocs] = useState<DocumentFile[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<DocumentFile | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatusText, setUploadStatusText] = useState<string>("Select a document to upload.");
+  
   const [utilityResult, setUtilityResult] = useState<{ title: string; content: string } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoadingUtility, setIsLoadingUtility] = useState<Record<UtilityAction, boolean>>({
@@ -35,22 +37,38 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     mindmap: false,
     podcast: false,
   });
+  const [analysisStatusText, setAnalysisStatusText] = useState<string>("Select document & utility type.");
 
   const { toast } = useToast();
 
-  // TODO: Adapt handleDocumentUpload. The JS code implies uploading the file to a backend.
-  // For now, it will behave as before (client-side content reading).
-  // This will need to change if we adopt the JS code's backend file management strategy.
+  // Mimic initial document loading if needed, or when user changes
+  useEffect(() => {
+    // In a real app, you might fetch user's documents here
+    // For now, it's based on client-side uploads
+    if (uploadedDocs.length === 0) {
+      setAnalysisStatusText("No documents uploaded. Upload a file.");
+    } else if (!selectedDoc) {
+      setAnalysisStatusText("Select a document and utility type.");
+    } else {
+      setAnalysisStatusText(`Ready for ${selectedDoc.name}.`);
+    }
+  }, [uploadedDocs, selectedDoc, user]);
+
+
   const handleDocumentUpload = async (file: File) => {
     setIsUploading(true);
+    setUploadStatusText(`Uploading ${file.name}...`);
     toast({ title: "Processing Document", description: `Reading ${file.name}...` });
+
+    // Simulate backend upload and processing delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
       const reader = new FileReader();
       reader.onload = (e) => {
         const content = e.target?.result as string;
         const newDoc: DocumentFile = { name: file.name, content, type: file.type };
-        // Prevent duplicates, or update if same name
+        
         setUploadedDocs((prev) => {
           const existing = prev.find(doc => doc.name === newDoc.name);
           if (existing) {
@@ -58,15 +76,19 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           }
           return [...prev, newDoc];
         });
-        setSelectedDoc(newDoc); // Auto-select
+        
+        setSelectedDoc(newDoc); 
+        setUploadStatusText(`Successfully processed ${file.name}.`);
         toast({ title: "Document Ready", description: `${file.name} is ready for use.` });
       };
       reader.onerror = () => {
+        setUploadStatusText(`Error reading ${file.name}.`);
         toast({ variant: "destructive", title: "File Read Failed", description: `Could not read ${file.name}.` });
       };
       reader.readAsText(file);
     } catch (error) {
       console.error("File processing error:", error);
+      setUploadStatusText("An unexpected error occurred during upload.");
       toast({ variant: "destructive", title: "File Error", description: "An unexpected error occurred." });
     } finally {
       setIsUploading(false);
@@ -77,25 +99,32 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     const doc = uploadedDocs.find(d => d.name === documentName);
     if (doc) {
       setSelectedDoc(doc);
+      setAnalysisStatusText(`Selected: ${doc.name}. Choose a utility.`);
       toast({ title: "Document Selected", description: `${doc.name} is now active.` });
+    } else {
+      setSelectedDoc(null);
+      setAnalysisStatusText("No document selected or document not found.");
     }
   };
 
   const handleUtilityAction = async (action: UtilityAction) => {
     if (!selectedDoc) {
+      setAnalysisStatusText("Please select a document first.");
       toast({ variant: "destructive", title: "No Document Selected", description: "Please select a document first." });
       return;
     }
 
     setIsLoadingUtility(prev => ({ ...prev, [action]: true }));
+    setAnalysisStatusText(`Generating ${action} for ${selectedDoc.name}...`);
     toast({ title: "Processing Utility", description: `Generating ${action} for ${selectedDoc.name}...` });
 
     try {
       let result: { title: string; content: string } | null = null;
-      // The JS code implies backend handles file by name. Current actions take content.
-      // For now, we stick to current action's requirements.
       const docContentInput = { documentContent: selectedDoc.content };
-      const docTextInput = { documentText: selectedDoc.content }; // for generateTopics
+      const docTextInput = { documentText: selectedDoc.content };
+
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       switch (action) {
         case 'faq':
@@ -108,10 +137,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           break;
         case 'mindmap':
           const mindmapRes = await generateMindMap(docContentInput);
-          result = { title: `Mind Map for ${selectedDoc.name}`, content: mindmapRes.mindMap };
+          // For now, mindmap content is text. Mermaid rendering is a TODO.
+          result = { title: `Mind Map (Text) for ${selectedDoc.name}`, content: mindmapRes.mindMap };
           break;
         case 'podcast':
           const podcastRes = await generatePodcastScript(docContentInput);
+          // For now, podcast script is text. Audio player is a TODO.
           result = { title: `Podcast Script for ${selectedDoc.name}`, content: podcastRes.podcastScript };
           break;
       }
@@ -119,11 +150,14 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       if (result) {
         setUtilityResult(result);
         setIsModalOpen(true);
+        setAnalysisStatusText(`${action} for ${selectedDoc.name} generated.`);
         toast({ title: "Utility Generated", description: `${action} for ${selectedDoc.name} is ready.` });
       }
     } catch (error: any) {
       console.error(`Error generating ${action}:`, error);
-      toast({ variant: "destructive", title: `Error Generating ${action}`, description: error.message || "An unexpected error occurred." });
+      const errorMsg = error.message || "An unexpected error occurred.";
+      setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
+      toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
     } finally {
       setIsLoadingUtility(prev => ({ ...prev, [action]: false }));
     }
@@ -137,9 +171,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8">
           <DocumentUploadSection 
             onDocumentUpload={handleDocumentUpload} 
-            isUploading={isUploading} 
-            // TODO: The JS implies a /documents endpoint and backend status checks.
-            // This needs to be integrated if we fully follow that logic.
+            isUploading={isUploading}
+            uploadStatusText={uploadStatusText}
           />
           <DocumentUtilitiesSection
             documents={uploadedDocs}
@@ -147,18 +180,16 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             onSelectDocument={handleSelectDocument}
             onUtilityAction={handleUtilityAction}
             isLoading={isLoadingUtility}
-            // TODO: Disable based on backend status from JS logic
+            analysisStatusText={analysisStatusText}
+            isDocumentSelected={!!selectedDoc}
           />
         </div>
         {/* Right Column */}
         <div className="w-full lg:w-[65%] xl:w-[70%]">
           <ChatTutorSection 
             documentContent={selectedDoc?.content || null} 
-            // TODO: Chat needs to be adapted for thread_id from JS logic.
-            // It currently relies on passing documentContent directly.
-            // Backend status (DB, AI) from JS logic should also control chat availability.
-            // Current username for display might also be relevant.
             username={user.username}
+            // TODO: Integrate backendStatus and threadId management more deeply
           />
         </div>
       </div>
