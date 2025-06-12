@@ -1,5 +1,7 @@
 
-import type { FC, useState } from 'react';
+'use client';
+import type { FC } from 'react'; // Keep existing type import
+import { useState } from 'react'; // Added import for useState
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
