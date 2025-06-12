@@ -11,7 +11,7 @@ const ChatApiInputSchema = z.object({
   query: z.string(),
   documentContent: z.string().optional(), 
   threadId: z.string().optional(),
-  authToken: z.string().optional(), // Added authToken to receive from client
+  authToken: z.string().optional(), // Added authToken
 });
 
 export async function POST(request: Request) {
@@ -33,19 +33,15 @@ export async function POST(request: Request) {
 
     const headersToFlask: HeadersInit = {
       'Content-Type': 'application/json',
-      // Add other headers Flask might need, e.g., 'Accept': 'text/event-stream'
     };
     if (authToken) {
-      headersToFlask['Authorization'] = `Bearer ${authToken}`; // Forward token to Flask
+      headersToFlask['Authorization'] = `Bearer ${authToken}`;
     }
 
     const flaskResponse = await fetch(`${FLASK_BACKEND_URL}/chat`, {
       method: 'POST',
       headers: headersToFlask,
       body: JSON.stringify(flaskRequestBody),
-      // IMPORTANT: If Flask /chat endpoint uses streaming, ensure Next.js fetch doesn't buffer
-      // by default, fetch should stream the body for ReadableStream.
-      // For Next.js edge runtime, duplex might be needed: duplex: 'half'
     });
 
     if (!flaskResponse.ok || !flaskResponse.body) {
@@ -53,16 +49,6 @@ export async function POST(request: Request) {
       console.error('Flask chat API error:', errorData);
       return NextResponse.json({error: errorData.message || errorData.error || 'Failed to connect to Flask chat API.'}, {status: flaskResponse.status});
     }
-
-    // Check if Flask is sending SSE
-    const contentType = flaskResponse.headers.get('Content-Type');
-    if (!contentType || !contentType.includes('text/event-stream')) {
-        console.error('Flask chat API did not return SSE. Content-Type:', contentType);
-        const nonStreamedText = await flaskResponse.text();
-        // Handle as a non-streaming response or return an error
-        return NextResponse.json({ error: 'Expected SSE stream from Flask, received other.', data: nonStreamedText }, { status: 500 });
-    }
-
 
     const readableStream = new ReadableStream({
       async start(controller) {
@@ -106,3 +92,7 @@ export async function POST(request: Request) {
     return NextResponse.json({error: error.message || 'An unexpected error occurred in /api/chat.'}, {status: 500});
   }
 }
+// Note: This code is designed to be used in a Next.js API route.
+// It handles POST requests to the /api/chat endpoint, validates input using Zod,
+// and streams responses from a Flask backend chat API.
+// The code includes error handling for both input validation and Flask API communication.
