@@ -1,3 +1,4 @@
+
 import os
 import logging
 import ollama
@@ -58,7 +59,8 @@ from config import (
     SUMMARY_BUFFER_TOKEN_LIMIT ,# Import summary buffer limit
     LATEX_SUMMARIZATION_PROMPT_TEMPLATE, # Kept in case it's used elsewhere or future
     NOUGAT_CHECKPOINT_PATH, NOUGAT_MODEL_TAG,
-    PODCAST_AUDIO_FOLDER, PODCAST_GENERATION_PROMPT_TEMPLATE # New podcast configs
+    PODCAST_AUDIO_FOLDER, PODCAST_GENERATION_PROMPT_TEMPLATE, # New podcast configs
+    GENERAL_QUERY_PLACEHOLDER # Import the placeholder
 )
 from utils import parse_llm_response, extract_references, escape_html # Added escape_html for potential use
 import database # Import database module to interact with chat history/sessions
@@ -527,16 +529,23 @@ def perform_rag_search(query: str, user_id_for_filter: str, document_filter: Opt
     """
     Performs RAG. Filters retrieved documents to include only those belonging
     to user_id_for_filter and optionally to a specific document_filter.
+    If document_filter is GENERAL_QUERY_PLACEHOLDER, it's treated as no filter.
     """
     global vector_store
+    
+    # If document_filter is the placeholder, treat it as if no specific document was selected.
+    if document_filter == GENERAL_QUERY_PLACEHOLDER:
+        document_filter = None # Allow search across all user's documents
+
     if not vector_store or not query or not query.strip() or getattr(getattr(vector_store, 'index', None), 'ntotal', 0) == 0:
         logger.warning("RAG search prerequisites not met (no store, empty query, or empty index).")
         return [], "No relevant context was found in your accessible documents.", {}
+    
     context_docs = []
     formatted_context_text = "No relevant context was found in your accessible documents."
     context_docs_map = {}
     try:
-        logger.info(f"RAG search for user_id_for_filter={user_id_for_filter}, document_filter={document_filter}, query='{query[:100]}...'")
+        logger.info(f"RAG search for user_id_for_filter={user_id_for_filter}, document_filter='{document_filter}', query='{query[:100]}...'")
         search_queries = generate_sub_queries(query)
         all_retrieved_docs_with_scores = []
         fetch_k_multiplier = 3
@@ -571,7 +580,7 @@ def perform_rag_search(query: str, user_id_for_filter: str, document_filter: Opt
             if doc_user_id != user_id_for_filter:
                 continue
 
-            # Apply document_filter if provided
+            # Apply document_filter if provided (and it's not the placeholder)
             if document_filter and source != document_filter:
                 logger.debug(f"Skipping document '{source}' as it does not match filter '{document_filter}'.")
                 continue
@@ -583,10 +592,10 @@ def perform_rag_search(query: str, user_id_for_filter: str, document_filter: Opt
         logger.info(f"RAG search: {initial_retrieved_count} candidates retrieved -> {len(unique_docs_dict)} accessible & unique candidates for user '{user_id_for_filter}' (filtered by document: {document_filter}).")
 
         if not unique_docs_dict:
-            if document_filter:
+            if document_filter: # Specific document was requested but nothing found in it
                 logger.warning(f"No accessible document chunks found for user_id {user_id_for_filter} within document '{document_filter}'.")
                 return [], f"The document '{document_filter}' does not contain enough information to answer your question.", context_docs_map
-            else:
+            else: # General search (document_filter was None or placeholder) and still nothing found for the user
                 logger.warning(f"No accessible document chunks found after filtering for user_id {user_id_for_filter}.")
                 return [], formatted_context_text, context_docs_map
 
@@ -650,11 +659,8 @@ async def process_chat_query_with_rag_and_history(
 ) -> tuple[str, str, list[dict], str | None]: # Changed return type for thinking_content
 
     """
-    Orchestrates the chat process: loads history/summary, performs RAG,
+    Orchestrates the chat process: loads history/summary, performs RAG (if document_filter is provided and not placeholder),
     formats the prompt, calls the LLM, saves message and updated summary.
-    Ensures assistant responses are short and concise by default,
-    but capable of deeper Chain of Thought (CoT) reasoning when the prompt requires it.
-    Collects data for fine-tuning.
     """
     global llm, _last_used_ollama_url_index
 
@@ -662,101 +668,77 @@ async def process_chat_query_with_rag_and_history(
         error_msg = "AI model is not initialized. Cannot process chat query."
         logger.error(error_msg)
         return error_msg, thread_id, [], "AI components not ready."
-
-    # Determine if CoT is required based on the query
-    # Keywords indicating CoT: "step-by-step", "explain your reasoning", "detailed explanation", "walk me through"
-    # This can be made more sophisticated with a small classification model if needed.
+    
+    database.save_message(user_id, thread_id, 'user', query, raw_prompt=query, raw_response=None, is_cot=False)
     requires_cot = any(keyword in query.lower() for keyword in [
         "step-by-step", "explain your reasoning", "detailed explanation", "walk me through", "how does this work"
     ])
-    
-    # Save user message at the beginning of processing
-    # For the user message, raw_prompt is the query itself, raw_response is None, is_cot is False
-    database.save_message(user_id, thread_id, 'user', query, raw_prompt=query, raw_response=None, is_cot=False)
-    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}' (CoT required: {requires_cot}).")
-    logger.info(f"[AI-THINKING] Starting chat processing for user '{user_id}', thread '{thread_id}'.")
-    if async_callback:
-        await async_callback("Starting AI processing...")
-    if model_context:
-        logger.debug(f"[AI-THINKING] Model Context Received: Mode={model_context.current_mode}, Tools={model_context.available_tools}")
-    if agentic_context:
-        logger.debug(f"[AI-THINKING] Agentic Context Received: Role={agentic_context.agent_role}, Objectives={agentic_context.agent_objectives}")
+    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}' (CoT required: {requires_cot}). Document filter: '{document_filter}'")
+    if async_callback: await async_callback("Starting AI processing...")
 
     # Load message history for the specific thread
-    raw_message_history = database.get_messages_by_thread(user_id, thread_id) # Changed to get_messages_by_thread
-    if raw_message_history is None:
-        logger.error(f"[AI-THINKING] Failed to load message history for thread {thread_id}.")
-        raw_message_history = []
+    raw_message_history = database.get_messages_by_thread(user_id, thread_id)
+    if raw_message_history is None: raw_message_history = []
 
     langchain_messages = []
     for msg in raw_message_history:
-        if msg.get('sender') == 'user':
-            langchain_messages.append(HumanMessage(content=msg.get('message_text', '')))
-        elif msg.get('sender') == 'bot':
-            langchain_messages.append(AIMessage(content=msg.get('message_text', '')))
-
-    # Initialize ConversationSummaryBufferMemory for the specific thread
-    # The summary is loaded from the database at the start of the thread's interaction
-    # and saved back after each interaction.
-    thread_summary = database.get_thread_summary(user_id, thread_id) # Get existing summary
+        if msg.get('sender') == 'user': langchain_messages.append(HumanMessage(content=msg.get('message_text', '')))
+        elif msg.get('sender') == 'bot': langchain_messages.append(AIMessage(content=msg.get('message_text', '')))
+    
+    thread_summary = database.get_thread_summary(user_id, thread_id)
     if thread_summary:
-        # Prepend the summary to the chat history for the memory buffer
         langchain_messages.insert(0, AIMessage(content=f"Current conversation summary: {thread_summary}"))
         logger.debug(f"Loaded existing thread summary for thread {thread_id}: {thread_summary[:100]}...")
 
     memory = ConversationSummaryBufferMemory(
-        llm=llm,
-        max_token_limit=SUMMARY_BUFFER_TOKEN_LIMIT,
+        llm=llm, max_token_limit=SUMMARY_BUFFER_TOKEN_LIMIT,
         chat_memory=InMemoryChatMessageHistory(messages=langchain_messages),
-        return_messages=False, # We want the string format for the prompt
-        memory_key="chat_history",
-        output_key="answer"
+        return_messages=False, memory_key="chat_history", output_key="answer"
     )
-
     chat_history_for_prompt = memory.load_memory_variables({})['chat_history']
-    logger.debug(f"[AI-THINKING] Memory buffer/history string for prompt (length: {len(chat_history_for_prompt)}):\n{chat_history_for_prompt[:200]}...")
-    if async_callback:
-        await async_callback("Searching relevant documents...")
-    logger.info(f"[AI-THINKING] Searching relevant documents for query: '{query[:50]}...'")
 
-    _, context_text, context_docs_map = perform_rag_search(query, user_id_for_filter=user_id, document_filter=document_filter)
-    logger.debug(f"[AI-THINKING] RAG search returned {len(context_docs_map)} potential references for user '{user_id}'.")
-    
-    # If a document filter was specified but no context was found, inform the user.
-    if document_filter and not context_docs_map:
-        response_message = f"The document '{document_filter}' does not contain enough information to answer your question."
-        # Save bot message with raw data
-        database.save_message(user_id, thread_id, 'bot', response_message, raw_prompt=query, raw_response=response_message, is_cot=False)
-        await memory.asave_context({'input': query}, {'answer': response_message})
-        new_summary = memory.load_memory_variables({})['chat_history']
-        database.save_thread_summary(user_id, thread_id, new_summary)
-        logger.info(f"[AI-THINKING] No RAG context found in {document_filter}. Informing user.")
-        return response_message, thread_id, [], f"No RAG context found in {document_filter}."
-    
-    # If no document filter was specified AND no context was found, ask the user to specify a document.
-    elif not document_filter and not context_docs_map:
-        logger.info(f"[AI-THINKING] No document specified and no RAG context found. Falling back to general Ollama response.")
+    context_text = "No relevant context was found." # Default if no RAG or RAG fails
+    context_docs_map = {}
+
+    # Determine if this is a general query or document-specific
+    is_general_query_mode = (document_filter == GENERAL_QUERY_PLACEHOLDER) or (document_filter is None)
+
+    if is_general_query_mode:
+        logger.info(f"[AI-THINKING] General query mode. Document filter is '{document_filter}'. No RAG will be performed.")
+        if async_callback: await async_callback("Generating general response...")
+        # We still need chat history for the general response context
         response_message = await get_general_response_from_ollama(query, chat_history_for_prompt, async_callback)
-        # Save bot message with raw data
-        database.save_message(user_id, thread_id, 'bot', response_message, raw_prompt=query, raw_response=response_message, is_cot=False)
+        
+        database.save_message(user_id, thread_id, 'bot', response_message, raw_prompt=query, raw_response=response_message, is_cot=requires_cot)
         await memory.asave_context({'input': query}, {'answer': response_message})
-        new_summary = memory.load_memory_variables({})['chat_history']
-        database.save_thread_summary(user_id, thread_id, new_summary)
-        return response_message, thread_id, [], "No document specified, falling back to general LLM."
-    
-    # If context_docs_map is NOT empty (meaning relevant documents were found, either with or without a filter)
+        new_summary_content = memory.moving_summary_buffer
+        database.save_thread_summary(user_id, thread_id, new_summary_content)
+        return response_message, thread_id, [], "General query mode, no RAG performed."
     else:
-        try:
-            if async_callback:
-                await async_callback("Synthesizing answer with retrieved context...")
-            logger.info("[AI-THINKING] Synthesizing answer with retrieved context.")
+        # This is a document-specific query (document_filter is a filename)
+        if async_callback: await async_callback(f"Searching in document: {document_filter}...")
+        logger.info(f"[AI-THINKING] Document-specific query. Searching in document: '{document_filter}' for query: '{query[:50]}...'")
+        _, context_text, context_docs_map = perform_rag_search(query, user_id_for_filter=user_id, document_filter=document_filter)
+        logger.debug(f"[AI-THINKING] RAG search returned {len(context_docs_map)} potential references for user '{user_id}'.")
 
-            # Construct the prompt based on whether CoT is required
-            if requires_cot:
-                # For CoT, we want the LLM to explicitly think step-by-step
-                synthesis_template_cot = ChatPromptTemplate.from_messages([
-                    ("system", """You are a Faculty for engineering students with in-depth knowledge across all engineering subjects, supporting an academic audience from undergraduates to PhD scholars.
-Your main goal is to answer the user's query based on the provided context chunks. If the context is empty or unrelated, or does not contain enough information to answer the query, you MUST state: "I could not find this information in the uploaded document." Do NOT use general knowledge.
+        if not context_docs_map: # RAG search for the specific document yielded no results
+            response_message = f"The document '{document_filter}' does not contain enough information to answer your question. Try asking a more general question or rephrasing."
+            database.save_message(user_id, thread_id, 'bot', response_message, raw_prompt=query, raw_response=response_message, is_cot=requires_cot)
+            await memory.asave_context({'input': query}, {'answer': response_message})
+            new_summary_content = memory.moving_summary_buffer
+            database.save_thread_summary(user_id, thread_id, new_summary_content)
+            logger.info(f"[AI-THINKING] No RAG context found in {document_filter}. Informing user.")
+            return response_message, thread_id, [], f"No RAG context found in {document_filter}."
+
+    # If we reach here, it means RAG was performed on a specific document and context_docs_map is not empty.
+    # Proceed with synthesis using the retrieved context.
+    try:
+        if async_callback: await async_callback("Synthesizing answer with retrieved context...")
+        logger.info("[AI-THINKING] Synthesizing answer with retrieved context.")
+
+        synthesis_template_base = [
+            ("system", """You are a Faculty for engineering students with in-depth knowledge across all engineering subjects, supporting an academic audience from undergraduates to PhD scholars.
+Your main goal is to answer the user's query based on the provided context chunks. If the context is empty or unrelated, or does not contain enough information to answer the query, you MUST state: "I could not find this information in the uploaded document." Do NOT use general knowledge in that case.
 
 **CONVERSATION HISTORY:**
 {chat_history}
@@ -771,8 +753,12 @@ Your main goal is to answer the user's query based on the provided context chunk
 --- START CONTEXT ---
 {context}
 --- END CONTEXT ---
+"""),
+        ]
 
-**INSTRUCTIONS:**
+        if requires_cot:
+            synthesis_template_messages = synthesis_template_base + [
+                ("system", """**INSTRUCTIONS (Detailed - CoT):**
 **STEP 1: THINKING PROCESS (MANDATORY):**
 <thinking>
 The user query is about "{query}". This query requires a detailed, step-by-step explanation. I will first analyze the provided context for relevant information. If the context is empty or unrelated, I will explicitly state that the information is not found in the document. If relevant context is found, I will use it to formulate a comprehensive, academic response, ensuring to cite sources.
@@ -783,161 +769,87 @@ The user query is about "{query}". This query requires a detailed, step-by-step 
 *   **CRITICAL: Prioritize Context & Extract ALL Relevant Details:** Base your answer **EXCLUSIVELY and primarily** on information within the `PROVIDED CONTEXT`. When relevant context is available, **extract and elaborate on EVERY SINGLE RELEVANT DETAIL, CONCEPT, AND EXPLANATION** found within those chunks. Do NOT omit any pertinent information. Your goal is to re-explain the relevant parts of the PDF as comprehensively as possible, as if you are teaching it word-for-word from the provided text. Do NOT be brief or concise when context is provided. Expand on every relevant point.
 *   **Cite Sources:** When using information *directly* from a context chunk, **you MUST cite** its number like [1], [2], [1][3]. Cite all relevant sources for each piece of information derived from the context.
 *   **If Answer Not in PDF:** If the answer to the query is **not present** in the `PROVIDED CONTEXT`, you **MUST** state: "I could not find this information in the uploaded document." Do not guess or use external knowledge in this scenario.
-*   **Be a Tutor:** Explain concepts clearly and deeply. Be helpful, accurate, and conversational. Use extensive Markdown formatting (headings, nested lists, bolding, code blocks, tables if applicable) for maximum readability and structure.
-*   **Accuracy:** Do not invent information not present in the context. If unsure, state that.
 *   Be academic, organized, and use markdown formatting (headings, bullet points, equations if needed).
 """),
-                    ("human", "{query}")
-                ])
-                final_prompt = synthesis_template_cot.format_messages(
-                    query=query,
-                    context=context_text,
-                    chat_history=chat_history_for_prompt,
-                    model_context_protocol=model_context,
-                    agentic_context_protocol=agentic_context
-                )
-            else:
-                # For concise responses, use a simpler prompt without explicit thinking instructions
-                synthesis_template_concise = ChatPromptTemplate.from_messages([
-                    ("system", """You are a concise and helpful AI tutor in engineering. Answer the user's query directly and briefly based on the provided context. If the context is insufficient or unrelated, you MUST state: "I could not find this information in the uploaded document." Do NOT use general knowledge. Do not include any thinking process.
-
-**CONVERSATION HISTORY:**
-{chat_history}
-
-**MODEL CONTEXT:**
-{model_context_protocol}
-
-**AGENTIC CONTEXT:**
-{agentic_context_protocol}
-
-**PROVIDED CONTEXT:**
---- START CONTEXT ---
-{context}
---- END CONTEXT ---
-
-**INSTRUCTIONS:**
+                ("human", "{query}")
+            ]
+        else: # Concise response
+            synthesis_template_messages = synthesis_template_base + [
+                ("system", """**INSTRUCTIONS (Concise):**
 *   Answer the user's query concisely.
 *   Prioritize information from the `PROVIDED CONTEXT` and cite sources [1], [2], etc.
 *   **If Answer Not in PDF:** If the answer to the query is **not present** in the `PROVIDED CONTEXT`, you **MUST** state: "I could not find this information in the uploaded document." Do not guess or use external knowledge in this scenario.
 *   Do NOT include any "thinking process" or `<thinking>` tags.
 *   Be direct and to the point.
 """),
-                    ("human", "{query}")
-                ])
-                final_prompt = synthesis_template_concise.format_messages(
-                    query=query,
-                    context=context_text,
-                    chat_history=chat_history_for_prompt,
-                    model_context_protocol=model_context,
-                    agentic_context_protocol=agentic_context
-                )
+                ("human", "{query}")
+            ]
+        
+        synthesis_prompt_template = ChatPromptTemplate.from_messages(synthesis_template_messages)
+        final_prompt = synthesis_prompt_template.format_messages(
+            query=query, context=context_text, chat_history=chat_history_for_prompt,
+            model_context_protocol=model_context or ModelContextProtocol(current_mode="chat", available_tools=[]),
+            agentic_context_protocol=agentic_context or AgenticContextProtocol(agent_role="AI Tutor", agent_objectives=["answer question"])
+        )
+        logger.info(f"[AI-THINKING] Sending synthesis prompt to LLM (model: {OLLAMA_MODEL}, CoT: {requires_cot})...")
+        logger.debug(f"[AI-THINKING] Synthesis Prompt (System Start):\n{final_prompt[0].content[:500]}...")
+        if len(final_prompt) > 1 and hasattr(final_prompt[1], 'content'): logger.debug(f"[AI-THINKING] Synthesis Prompt (Human Start):\n{final_prompt[1].content[:500]}...")
 
-            logger.info(f"[AI-THINKING] Sending synthesis prompt to LLM (model: {OLLAMA_MODEL}, CoT: {requires_cot})...")
-            logger.debug(f"[AI-THINKING] Synthesis Prompt (Start):\n{final_prompt[0].content[:500]}...") # Access content of system message
-            if len(final_prompt) > 1:
-                logger.debug(f"[AI-THINKING] Human Prompt (Start):\n{final_prompt[1].content[:500]}...")
+    except KeyError as e:
+        logger.error(f"[AI-THINKING] Error formatting synthesis prompt: Missing key {e}. Check prompt variables.")
+        bot_answer = f"Error: Internal prompt configuration issue ({e})."
+        database.save_message(user_id, thread_id, 'bot', bot_answer, raw_prompt=query, raw_response=bot_answer, is_cot=requires_cot)
+        return bot_answer, thread_id, [], "Prompt formatting failed."
+    except Exception as e:
+        logger.error(f"[AI-THINKING] Error creating synthesis prompt: {e}", exc_info=True)
+        bot_answer = f"Error: Could not prepare the request for the AI model ({type(e).__name__})."
+        database.save_message(user_id, thread_id, 'bot', bot_answer, raw_prompt=query, raw_response=bot_answer, is_cot=requires_cot)
+        return bot_answer, thread_id, [], "Prompt creation failed."
 
-        except KeyError as e:
-            logger.error(f"[AI-THINKING] Error formatting SYNTHESIS_PROMPT_TEMPLATE: Missing key {e}. Check config.py.")
-            bot_answer = f"Error: Internal prompt configuration issue ({e})."
-            # Save bot message with raw data
-            database.save_message(user_id, thread_id, 'bot', bot_answer, raw_prompt=query, raw_response=bot_answer, is_cot=requires_cot)
-            return bot_answer, thread_id, [], "Prompt formatting failed."
-        except Exception as e:
-            logger.error(f"[AI-THINKING] Error creating synthesis prompt: {e}", exc_info=True)
-            bot_answer = f"Error: Could not prepare the request for the AI model ({type(e).__name__})."
-            # Save bot message with raw data
-            database.save_message(user_id, thread_id, 'bot', bot_answer, raw_prompt=query, raw_response=bot_answer, is_cot=requires_cot)
-            return bot_answer, thread_id, [], "Prompt creation failed."
-
+    # LLM Invocation (common for RAG path)
     try:
         current_ollama_base_url = get_next_ollama_base_url()
         if not current_ollama_base_url:
             error_msg = "No active Ollama base URLs available for LLM invocation."
             logger.error(f"[AI-THINKING] {error_msg}")
-            # Save bot message with raw data
             database.save_message(user_id, thread_id, 'bot', error_msg, raw_prompt=query, raw_response=error_msg, is_cot=requires_cot)
             return error_msg, thread_id, [], "No active Ollama URLs."
 
-        temp_llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=current_ollama_base_url,
-            client_kwargs={'timeout': OLLAMA_REQUEST_TIMEOUT} if OLLAMA_REQUEST_TIMEOUT else {}
-        )
-        if async_callback:
-            await async_callback("Invoking LLM...")
+        temp_llm = ChatOllama(model=OLLAMA_MODEL, base_url=current_ollama_base_url, client_kwargs={'timeout': OLLAMA_REQUEST_TIMEOUT} if OLLAMA_REQUEST_TIMEOUT else {})
+        if async_callback: await async_callback("Invoking LLM for synthesis...")
         logger.info(f"[AI-THINKING] Invoking LLM for synthesis using {current_ollama_base_url}...")
         
-        # Invoke the LLM with the constructed prompt (which is now a list of messages)
         response_object = await temp_llm.ainvoke(final_prompt)
         full_llm_response = getattr(response_object, 'content', str(response_object))
-
         logger.info(f"[AI-THINKING] LLM synthesis response received (length: {len(full_llm_response)}).")
-        logger.debug(f"[AI-THINKING] Synthesis Raw Response (Start):\n{full_llm_response[:500]}...")
 
-        if async_callback:
-            await async_callback("Parsing LLM response...")
-        logger.info("[AI-THINKING] Parsing LLM response and extracting thinking content.")
-        
-        # Parse the LLM response to separate the final answer from thinking content
+        if async_callback: await async_callback("Parsing LLM response...")
         bot_answer, thinking_content_list = parse_llm_response(full_llm_response)
-        thinking_content = "\n".join(thinking_content_list) if thinking_content_list else None
+        thinking_content_str = "\n".join(thinking_content_list) if thinking_content_list else None
 
-        if not bot_answer and thinking_content:
-             logger.warning("[AI-THINKING] Parsed user answer is empty after removing thinking block. The response might have only contained thinking.")
-             bot_answer = "[AI response was empty. See reasoning process.]"
-        elif not bot_answer and not thinking_content:
-             logger.error("[AI-THINKING] LLM response parsing resulted in empty answer and no thinking content.")
-             bot_answer = "[AI Response Processing Error: Empty result after parsing]"
-
-        if bot_answer.strip().lower().startswith("error:") or "sorry, i encountered an error" in bot_answer.lower():
-            logger.warning(f"[AI-THINKING] LLM synthesis seems to have resulted in an error message: '{bot_answer[:100]}...'")
+        if not bot_answer and thinking_content_str: bot_answer = "[AI response was empty. See reasoning process.]"
+        elif not bot_answer and not thinking_content_str: bot_answer = "[AI Response Processing Error: Empty result after parsing]"
 
         references = extract_references(bot_answer, context_docs_map)
-        try:
-            logger.info("[AI-THINKING] Saving chat messages and updating thread summary.")
-            # Add the user's current query and the bot's answer to the memory buffer
-            await memory.asave_context(
-                {'input': query},
-                {'answer': bot_answer}
-            )
-            
-            # The ConversationSummaryBufferMemory stores its actual summary in moving_summary_buffer
-            # This is the part that should be persisted for the next interaction's summary.
-            new_summary_content = memory.moving_summary_buffer
-            logger.debug(f"[AI-THINKING] New summary content from memory (length: {len(new_summary_content)}):\n{new_summary_content[:200]}...")
-
-            # Save bot message with raw prompt, raw response, and CoT flag
-            database.save_message(
-                user_id, thread_id, 'bot', bot_answer,
-                references=references,
-                cot_reasoning=thinking_content,
-                raw_prompt=query, # The original user query
-                raw_response=full_llm_response, # The full raw response from LLM
-                is_cot=requires_cot # Whether CoT was explicitly requested/used
-            )
-            # Save the updated thread summary (the actual summary, not the full buffer)
-            database.save_thread_summary(user_id, thread_id, new_summary_content)
-
-        except Exception as db_save_error:
-            logger.error(f"[AI-THINKING] Failed to save chat messages or updated summary for user '{user_id}', thread '{thread_id}': {db_save_error}", exc_info=True)
-            bot_answer += "\n\n_[Note: Failed to save chat history or update summary. See backend logs.]_"
+        
+        await memory.asave_context({'input': query}, {'answer': bot_answer})
+        new_summary_content = memory.moving_summary_buffer
+        database.save_message(
+            user_id, thread_id, 'bot', bot_answer, references=references,
+            cot_reasoning=thinking_content_str, raw_prompt=query, 
+            raw_response=full_llm_response, is_cot=requires_cot
+        )
+        database.save_thread_summary(user_id, thread_id, new_summary_content)
 
         logger.info(f"[AI-THINKING] Chat processing complete for user '{user_id}', thread '{thread_id}'. Answer generated, history/summary saved.")
-        if async_callback:
-            await async_callback("Done.")
-        return bot_answer.strip(), thread_id, references, thinking_content
+        if async_callback: await async_callback("Done.")
+        return bot_answer.strip(), thread_id, references, thinking_content_str
     except Exception as e:
         logger.error(f"[AI-THINKING] LLM chat synthesis or processing failed for user '{user_id}', thread '{thread_id}': {e}", exc_info=True)
         error_message = f"Sorry, I encountered an error while processing your request ({type(e).__name__}). The AI model might be unavailable, timed out, or failed internally."
-        # Save the error message as a bot response, including raw data for debugging/fine-tuning
-        database.save_message(
-            user_id, thread_id, 'bot', error_message,
-            references=None,
+        database.save_message(user_id, thread_id, 'bot', error_message, references=None,
             cot_reasoning=f"Error in ai_core processing: {type(e).__name__}: {str(e)}",
-            raw_prompt=query,
-            raw_response=error_message, # The error message itself as the raw response
-            is_cot=requires_cot
+            raw_prompt=query, raw_response=error_message, is_cot=requires_cot
         )
         return error_message, thread_id, [], f"Error: {type(e).__name__}"
 
@@ -1360,40 +1272,49 @@ async def get_general_response_from_ollama(query: str, chat_history: str = "", a
        logger.error("[AI-THINKING] LLM not initialized, cannot get general Ollama response.")
        return "Error: AI model is not available for general response."
 
-   general_prompt = f"""
-You are a highly skilled AI tutor in engineering. A student has asked the following question:
-
-User Query: "{query}"
-
-Chat History: {chat_history}
-
+   general_prompt_template = ChatPromptTemplate.from_messages([
+        ("system", """You are a highly skilled AI tutor in engineering. A student has asked a question.
+If a chat history is provided, consider it for context.
 Please provide a technically detailed, structured, and academically sound explanation. Use clear formatting and accurate terminology.
-"""
+If the question seems trivial or unanswerable with high confidence, you can state that you cannot provide a detailed answer or ask for clarification. Avoid making things up.
+
+Chat History:
+{chat_history}"""),
+        ("human", "User Query: \"{query}\"")
+    ])
+   
+   final_general_prompt = general_prompt_template.format_messages(
+       query=query,
+       chat_history=chat_history if chat_history.strip() else "No previous conversation."
+   )
+
    try:
-       # Use the load balancer for the actual LLM invocation
        current_ollama_base_url = get_next_ollama_base_url()
        if not current_ollama_base_url:
            error_msg = "No active Ollama base URLs available for general response."
            logger.error(f"[AI-THINKING] {error_msg}")
            return error_msg
 
-       # Re-initialize LLM with the selected base_url for this specific request
        temp_llm = ChatOllama(
            model=OLLAMA_MODEL,
            base_url=current_ollama_base_url,
            client_kwargs={'timeout': OLLAMA_REQUEST_TIMEOUT} if OLLAMA_REQUEST_TIMEOUT else {}
        )
        logger.info(f"[AI-THINKING] Getting general response from Ollama for query: '{query[:100]}...' using URL: {current_ollama_base_url}")
-       if async_callback:
-           await async_callback("Generating general response...")
-       response_object = await temp_llm.ainvoke(general_prompt)
+       if async_callback: await async_callback("Generating general response...")
+       
+       response_object = await temp_llm.ainvoke(final_general_prompt)
        full_llm_response = getattr(response_object, 'content', str(response_object))
-       logger.debug(f"[AI-THINKING] General LLM response received (length: {len(full_llm_response)}).")
-       if async_callback:
-           await async_callback("General response complete.")
-       return full_llm_response
+       
+       # Parse for thinking, though general prompt doesn't explicitly ask for it.
+       # It's good practice in case model adds it or for consistency.
+       parsed_answer, _ = parse_llm_response(full_llm_response)
+
+       logger.debug(f"[AI-THINKING] General LLM response received (length: {len(parsed_answer)}).")
+       if async_callback: await async_callback("General response complete.")
+       return parsed_answer.strip()
    except Exception as e:
-       logger.error(f"[AI-THINKING] Error getting general response from Ollama using URL {current_ollama_base_url}: {e}", exc_info=True)
+       logger.error(f"[AI-THINKING] Error getting general response from Ollama using URL {current_ollama_base_url if 'current_ollama_base_url' in locals() else 'N/A'}: {e}", exc_info=True)
        return f"Sorry, I encountered an error while generating a general response ({type(e).__name__})."
 
 # --- Podcast Generation ---
@@ -1517,3 +1438,5 @@ async def generate_podcast_from_document(
 
     if async_callback: await async_callback("Podcast generation complete.")
     return script_text, audio_path_part, None
+
+    
