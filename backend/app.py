@@ -4,7 +4,7 @@ import logging
 import json
 import uuid
 import asyncio
-from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+from flask import Flask, request, jsonify, Response, send_from_directory # Removed render_template
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt # For password hashing
 import jwt # For JWT handling
@@ -30,11 +30,14 @@ async def collect_async_gen(async_gen):
 
 # --- Global Flask App Setup ---
 backend_dir = os.path.dirname(__file__)
+# template_folder and static_folder are no longer strictly needed for serving the primary UI
+# but Flask might still use them if other extensions or parts of Flask serve static files directly.
+# For a pure API, they could be removed if not used by any other Flask functionality.
 template_folder = os.path.join(backend_dir, 'templates')
 static_folder = os.path.join(backend_dir, 'static')
 
-if not os.path.exists(template_folder): logger.error(f"Template folder not found: {template_folder}")
-if not os.path.exists(static_folder): logger.error(f"Static folder not found: {static_folder}")
+if not os.path.exists(template_folder): logger.warning(f"Template folder not found: {template_folder} (Note: Flask is now API-only for main UI)")
+if not os.path.exists(static_folder): logger.warning(f"Static folder not found: {static_folder} (Note: Flask is now API-only for main UI)")
 
 app = Flask(__name__, template_folder=template_folder, static_folder=static_folder)
 
@@ -163,17 +166,18 @@ def token_required(f):
     return decorated
 
 @app.route('/')
-def index():
-    logger.debug("Serving index.html")
-    try:
-        return render_template('index.html')
-    except Exception as e:
-         logger.error(f"Error rendering index.html: {e}", exc_info=True)
-         return "Error loading application interface. Check server logs.", 500
+def api_root():
+    logger.info("Flask backend root accessed. API is active.")
+    return jsonify({
+        "message": "Flask AI Tutor Backend is running.",
+        "status": "API Operational",
+        "note": "Access the frontend via the Next.js application."
+    }), 200
 
-@app.route('/favicon.ico')
-def favicon():
-    return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
+# Favicon removed, should be served by Next.js frontend
+# @app.route('/favicon.ico')
+# def favicon():
+#     return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -233,7 +237,7 @@ def login():
     if not app_db_ready:
         return jsonify({"error": "Database service unavailable for login."}), 503
     data = request.get_json()
-    identifier = data.get('username')
+    identifier = data.get('username') # Client sends as 'username', could be username or email
     password = data.get('password')
 
     if not identifier or not password:
@@ -245,12 +249,26 @@ def login():
 
     if user and bcrypt.check_password_hash(user['password_hash'], password):
         token_payload = {
-            'user_id': user['_id'],
+            'user_id': user['_id'], # Already stringified by get_user_by_username/email
             'username': user['username'],
             'exp': datetime.now(timezone.utc) + config.JWT_ACCESS_TOKEN_EXPIRES
         }
         token = jwt.encode(token_payload, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM)
-        return jsonify({"message": "Login successful.", "token": token, "username": user['username']}), 200
+        
+        # Return more user details for the frontend to store
+        user_details_for_frontend = {
+            "token": token,
+            "username": user.get('username'),
+            "email": user.get('email'),
+            "firstname": user.get('firstname'),
+            "lastname": user.get('lastname'),
+            "gender": user.get('gender'),
+            "mobile": user.get('mobile'),
+            "organization": user.get('organization')
+            # Do not send password_hash or _id directly if not needed by frontend explicitly with token
+        }
+        logger.info(f"Login successful for user: {user.get('username')}")
+        return jsonify(user_details_for_frontend), 200
     else:
         logger.warning(f"Invalid login attempt for identifier: {identifier}")
         return jsonify({"error": "Invalid username/email or password."}), 401
@@ -285,13 +303,17 @@ def get_documents(current_user):
     error_messages = []
 
     if app_db_ready:
-        user_docs_from_db = database.get_user_documents(user_id)
-        uploaded_files = sorted([doc["filename"] for doc in user_docs_from_db])
+        # Fetch user documents from DB (these are records, we need just filenames)
+        user_docs_from_db = database.get_user_documents(user_id) # This returns list of dicts
+        # Extract original_filename for display, or filename if original is missing
+        uploaded_files = sorted(
+            [doc.get("original_filename", doc["filename"]) for doc in user_docs_from_db]
+        )
     else:
         error_messages.append("Cannot retrieve user documents: Database unavailable.")
 
     response_data = {
-        "uploaded_files": uploaded_files,
+        "uploaded_files": uploaded_files, # This should be a list of filenames as strings
         "errors": error_messages if error_messages else None
     }
     return jsonify(response_data)
@@ -317,8 +339,11 @@ def upload_file(current_user):
         return jsonify({"error": "No file selected"}), 400
 
     original_filename = file.filename
-    if not utils.allowed_file(original_filename):
-        return jsonify({"error": "Invalid file type. Only PDF files are allowed."}), 400
+    # Updated allowed_file check to use config.ALLOWED_EXTENSIONS directly
+    if not ('.' in original_filename and original_filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS):
+        allowed_ext_str = ", ".join(config.ALLOWED_EXTENSIONS)
+        return jsonify({"error": f"Invalid file type. Only {allowed_ext_str} files are allowed."}), 400
+
 
     filename_uuid = f"{uuid.uuid4()}_{secure_filename(original_filename)}"
     logger.debug(f"Generated secured filename with UUID: {filename_uuid}")
@@ -346,18 +371,16 @@ def upload_file(current_user):
 
         text = ai_core.extract_text_from_pdf(filepath)
         if not text or not text.strip() or text.startswith("[Error: PDF is password protected"):
-            # Attempt to remove the uploaded file if text extraction fails critically
             if os.path.exists(filepath):
                  try: os.remove(filepath)
                  except OSError as e_remove: logger.error(f"Error removing file {filepath} after failed text extraction: {e_remove}")
-            # Attempt to remove the database record
-            if doc_record_id:
-                # You would need a function like `database.remove_document_record_by_id(doc_record_id)`
-                # For now, we'll just log it.
-                logger.info(f"Document record {doc_record_id} should be removed due to text extraction failure.")
-            
+            if doc_record_id: # If record was created
+                database.mark_document_indexed(doc_record_id, indexed=False, error_message="Text extraction failed or PDF protected")
+                # Consider deleting the document record from DB as well
+                logger.info(f"Document record {doc_record_id} should be reviewed or removed due to text extraction failure.")
+
             err_msg = "Could not read text from PDF (possibly password protected or empty)." if text and text.startswith("[Error: PDF is password protected") else f"Could not extract text from '{original_filename}'."
-            logger.error(f"{err_msg} File: {original_filename} ('{filename_uuid}') for user {user_id}. Removing file and record.")
+            logger.error(f"{err_msg} File: {original_filename} ('{filename_uuid}') for user {user_id}. Removing file and marking record.")
             return jsonify({"error": f"{err_msg} File was not added to knowledge base."}), 400
 
 
@@ -365,14 +388,13 @@ def upload_file(current_user):
         logger.info(f"Text extracted and cached for user {user_id}, file {filename_uuid}.")
 
         source_metadata = {
-             "source": filename_uuid,
+             "source": filename_uuid, # This is the secured name, frontend might prefer original_filename
              "user_id": user_id,
-             "doc_db_id": doc_record_id # Storing MongoDB ObjectId as string
+             "doc_db_id": str(doc_record_id) 
         }
         documents = ai_core.create_chunks_from_text(text, filename_uuid, source_metadata=source_metadata)
         if not documents:
              logger.error(f"Could not create document chunks for {filename_uuid} (user {user_id}).")
-             # Consider removing file and DB record here
              database.mark_document_indexed(str(doc_record_id), indexed=False, error_message="Chunk creation failed")
              return jsonify({"error": f"Could not process '{original_filename}' into searchable chunks. File uploaded but not added to knowledge base."}), 500
 
@@ -387,16 +409,19 @@ def upload_file(current_user):
 
         return jsonify({
             "message": f"File '{original_filename}' uploaded and added to knowledge base successfully.",
-            "filename": filename_uuid,
-            "original_filename": original_filename,
+            "filename": filename_uuid, # Return secured name
+            "original_filename": original_filename, # Also return original for display
             "vector_count": vector_count
         }), 200
 
     except Exception as e:
-        logger.error(f"Unexpected error processing upload for user {user_id}, filename '{original_filename}' ('{filename_uuid}'): {e}", exc_info=True)
-        if 'filepath' in locals() and os.path.exists(filepath): # type: ignore
-             try: os.remove(filepath) # type: ignore
+        logger.error(f"Unexpected error processing upload for user {user_id}, filename '{original_filename}' ('{filename_uuid if 'filename_uuid' in locals() else 'N/A'}'): {e}", exc_info=True)
+        if 'filepath' in locals() and os.path.exists(filepath): 
+             try: os.remove(filepath) 
              except OSError: pass
+        # If doc_record_id exists, mark as not indexed
+        if 'doc_record_id' in locals() and doc_record_id:
+            database.mark_document_indexed(str(doc_record_id), indexed=False, error_message=f"Unexpected error: {type(e).__name__}")
         return jsonify({"error": f"An unexpected server error occurred: {type(e).__name__}. File processing failed."}), 500
 
 
@@ -409,14 +434,17 @@ def analyze_document(current_user):
          return jsonify({"error": "Analysis unavailable: AI model is not ready."}), 503
 
     data = request.get_json()
-    filename = data.get('filename')
-    analysis_type = data.get('analysis_type') # This will include 'podcast' now
+    filename = data.get('filename') # This is the secured filename from the frontend
+    analysis_type = data.get('analysis_type') 
 
     if not filename or not analysis_type:
         return jsonify({"error": "Filename and analysis_type required."}), 400
+    
+    # Resolve original_filename for display if needed, using filename (secured) for processing
+    doc_record = database.get_document_by_filename(user_id, filename)
+    original_filename_display = doc_record.get("original_filename", filename) if doc_record else filename
 
-    # For existing analyses, check against ANALYSIS_PROMPTS
-    # For podcast, it's a different flow
+
     if analysis_type != "podcast" and analysis_type not in config.ANALYSIS_PROMPTS:
          return jsonify({"error": f"Invalid analysis type: {analysis_type}"}), 400
 
@@ -424,21 +452,18 @@ def analyze_document(current_user):
         logger.info(f"[AI-THINKING-{analysis_type.upper()}] {message}")
 
     if analysis_type == "podcast":
-        # Handle podcast generation separately
         try:
             script, audio_path_part, error = asyncio.run(
                 ai_core.generate_podcast_from_document(user_id, filename, async_callback=send_thinking_message)
             )
             if error:
-                return jsonify({"error": error, "script": script or ""}), 500
+                return jsonify({"error": error, "script": script or "", "original_filename": original_filename_display}), 500
             
             if not script or not audio_path_part:
-                 return jsonify({"error": "Failed to generate podcast content or audio.", "script": script or ""}), 500
+                 return jsonify({"error": "Failed to generate podcast content or audio.", "script": script or "", "original_filename": original_filename_display}), 500
 
             audio_url = f"{request.host_url.rstrip('/')}/serve_podcast_audio/{audio_path_part}"
-            doc_record = database.get_document_by_filename(user_id, filename) # To get original_filename
-            original_filename_display = doc_record.get("original_filename", filename) if doc_record else filename
-
+            
             return jsonify({
                 "message": "Podcast generated successfully.",
                 "script": script,
@@ -447,12 +472,11 @@ def analyze_document(current_user):
             })
         except Exception as e:
             logger.error(f"Unexpected error in /analyze (podcast) endpoint for {filename}, user {user_id}: {e}", exc_info=True)
-            return jsonify({"error": f"Internal server error during podcast generation: {type(e).__name__}"}), 500
+            return jsonify({"error": f"Internal server error during podcast generation: {type(e).__name__}", "original_filename": original_filename_display}), 500
     else:
-        # Existing analysis logic
-        analysis_content, thinking_content, latex_source = asyncio.run(
+        analysis_content, thinking_content_list, latex_source = asyncio.run(
             ai_core.generate_document_analysis(
-                filename,
+                filename, # Pass secured filename
                 analysis_type,
                 user_id=user_id,
                 async_callback=send_thinking_message
@@ -460,12 +484,13 @@ def analyze_document(current_user):
         )
         response_data = {
             "content": analysis_content,
-            "thinking": thinking_content,
-            "latex_source": latex_source
+            "thinking": "\n".join(thinking_content_list) if thinking_content_list else None, # Join list for JSON
+            "latex_source": latex_source,
+            "original_filename": original_filename_display
         }
         if analysis_content is None:
             logger.error(f"Unexpected None result from generate_document_analysis for '{filename}' type '{analysis_type}'.")
-            response_data["error"] = f"Could not generate analysis for '{filename}' due to an internal issue."
+            response_data["error"] = f"Could not generate analysis for '{original_filename_display}' due to an internal issue."
             return jsonify(response_data), 500
 
         if isinstance(analysis_content, str) and analysis_content.startswith("Error:"):
@@ -487,7 +512,7 @@ def create_new_chat_thread(current_user):
         return jsonify({"error": "Cannot create chat thread: Database service unavailable."}), 503
     
     data = request.get_json()
-    title = data.get('title', "New Chat") # Get title from request or use default
+    title = data.get('title', "New Chat") 
 
     thread_id = database.create_chat_thread(user_id, title=title)
     if thread_id:
@@ -504,12 +529,10 @@ def get_threads(current_user):
     if not app_db_ready:
         return jsonify({"error": "Thread list unavailable: Database connection failed."}), 503
     threads = database.get_user_threads(user_id)
-    if threads is None:
+    if threads is None: # get_user_threads returns [] on error, not None, but check anyway
         return jsonify({"error": "Could not retrieve threads due to a database error."}), 500
     else:
-        # Augment with titles from localStorage if available (this is a bit of a hack, ideally titles are fully backend managed)
-        # For now, the title is already in the thread object from DB
-        return jsonify(threads), 200
+        return jsonify(threads), 200 # threads is already a list of dicts
 
 @app.route('/thread_history', methods=['GET'])
 @token_required
@@ -521,8 +544,8 @@ def get_thread_history(current_user):
     if not thread_id:
         return jsonify({"error": "Missing 'thread_id' parameter"}), 400
     messages = database.get_messages_by_thread(user_id, thread_id)
-    if messages is None:
-        return jsonify({"error": "Could not retrieve history due to a database error."}), 500
+    if messages is None: # get_messages_by_thread returns None on error or empty list
+        return jsonify({"error": "Could not retrieve history for this thread or thread is empty."}), 404 # 404 if not found/empty
     else:
         return jsonify(messages), 200
 
@@ -540,48 +563,62 @@ def chat(current_user):
 
     data = request.get_json()
     query = data.get('query')
-    thread_id = data.get('thread_id')
+    thread_id = data.get('thread_id') # This is the frontend's current threadId
 
     if not query or not query.strip():
         return jsonify({"error": "Query cannot be empty", "answer": "Please enter a question.", "thread_id": thread_id}), 400
     query = query.strip()
 
-    document_filter = None
-    original_query_starts_with_at = query.startswith('@')
-    if original_query_starts_with_at:
+    # Frontend now sends documentName for context, not full content.
+    # This documentName is the "secured" filename from the database.
+    document_context_name = data.get('documentContent') # Frontend uses 'documentContent' to pass the name
+    
+    # If document_context_name is "No document provided for context.", treat as general query.
+    # Otherwise, it's a filename to use for RAG.
+    is_general_query = document_context_name == "No document provided for context." or not document_context_name
+
+    # Handle @filename syntax from query if still desired, though frontend now passes context explicitly
+    document_filter_from_query = None
+    if query.startswith('@'):
         import re
-        # Updated regex to better match filenames that might include dots, hyphens, underscores
-        doc_match = re.match(r'^@([a-zA-Z0-9_.-]+\.pdf)\s*(.*)$', query, re.IGNORECASE)
+        doc_match = re.match(r'^@([a-zA-Z0-9_.-]+\.pdf)\s*(.*)$', query, re.IGNORECASE) # Assuming PDF only for @ syntax
         if doc_match:
-            document_filter = doc_match.group(1)
+            document_filter_from_query = doc_match.group(1) # This is original_filename
             query = doc_match.group(2).strip()
-            logger.info(f"Detected document filter: {document_filter} for query: {query[:50]}...")
+            logger.info(f"Detected @document filter in query: {document_filter_from_query} for query: {query[:50]}...")
+            # We'd need to resolve this original_filename to the secured filename for RAG
+            # For simplicity, if document_context_name is already provided, prioritize that.
+            # This @ syntax might be redundant if frontend sends context name.
+            if not is_general_query and document_context_name != document_filter_from_query:
+                logger.warning(f"Conflicting document context: '@{document_filter_from_query}' in query vs '{document_context_name}' from UI. Prioritizing UI context.")
         else:
-            # If it starts with @ but doesn't match the file pattern, treat it as a general query without the @
-            # query = query[1:].strip() # This behavior might be confusing, consider if it's desired
-            logger.info(f"Query starts with '@' but no specific document filter matched. Query: {query[:50]}...")
+             logger.info(f"Query starts with '@' but no specific document filter matched pattern. Query: {query[:50]}...")
 
 
+    final_document_filter_for_rag = None
+    if not is_general_query:
+        final_document_filter_for_rag = document_context_name # This should be the secured filename
+        logger.info(f"Chat context is document: '{final_document_filter_for_rag}'")
+    else:
+        logger.info("Chat context is General (no specific document).")
+        
+    # Ensure thread_id exists; create if not provided by client (e.g., first message in a new chat)
     if not thread_id:
-        logger.info(f"No thread_id provided in chat request from user '{user_id}'. Creating a new thread.")
-        # Try to generate a title from the first query
-        # This is a simplified approach. A more robust way would be to call a small LLM prompt.
+        logger.info(f"No thread_id provided for chat from user '{user_id}'. Creating new thread.")
         first_query_words = query.split()
         potential_title = " ".join(first_query_words[:5])
-        if len(first_query_words) > 5:
-            potential_title += "..."
+        if len(first_query_words) > 5: potential_title += "..."
         
-        thread_id = database.create_chat_thread(user_id, title=potential_title)
-        if not thread_id:
-            logger.error(f"Failed to create new thread for user '{user_id}' during initial chat message.")
+        new_thread_id_from_db = database.create_chat_thread(user_id, title=potential_title)
+        if not new_thread_id_from_db:
+            logger.error(f"Failed to create new thread for user '{user_id}' during chat message.")
             error_msg = "Failed to start new chat thread due to a server error."
-            # Avoid saving message to "temp_error_thread" as it might not exist or be intended
-            # database.save_message(user_id, "temp_error_thread", 'user', query) 
-            return jsonify({"error": error_msg, "answer": error_msg}), 500
+            return jsonify({"error": error_msg, "answer": error_msg, "type": "error"}), 500
+        thread_id = new_thread_id_from_db # Use the newly created thread_id
         logger.info(f"New thread ID '{thread_id}' created for user '{user_id}' for this chat with title '{potential_title}'.")
 
 
-    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}': '{query[:100]}...'")
+    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}': '{query[:100]}...' Document context: {final_document_filter_for_rag or 'General'}")
 
     def format_sse(data: dict) -> str:
         json_data = json.dumps(data)
@@ -590,38 +627,31 @@ def chat(current_user):
     def stream():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        thinking_messages_for_stream = [] # Renamed to avoid conflict with JS variable
+        thinking_messages_for_stream = [] 
         
-        async def send_thinking_message_for_stream(msg): # Renamed
+        async def send_thinking_message_for_stream(msg): 
             thinking_messages_for_stream.append(msg)
         
         async def run_query():
             try:
                 bot_answer, returned_thread_id, references, thinking_content = await ai_core.process_chat_query_with_rag_and_history(
                     user_id=user_id,
-                    thread_id=thread_id, # Use the determined thread_id
+                    thread_id=thread_id, 
                     query=query,
-                    model_context=None, # Pass actual context if available/needed
-                    agentic_context=None, # Pass actual context if available/needed
-                    document_filter=document_filter,
-                    async_callback=send_thinking_message_for_stream # Pass the renamed callback
+                    model_context=None, 
+                    agentic_context=None, 
+                    document_filter=final_document_filter_for_rag, # Pass the resolved document context
+                    async_callback=send_thinking_message_for_stream 
                 )
-                # Stream thinking messages first
                 for tmsg in thinking_messages_for_stream:
-                    yield format_sse({"type": "thinking", "message": tmsg})
-                
-                # Stream chunks of the bot_answer if it's long (conceptual, actual chunking needs more logic)
-                # For now, sending the whole answer as "final" after thinking.
-                # If you want to stream chunks of the answer itself, ai_core.process_chat_query_with_rag_and_history
-                # would need to yield chunks.
-                # For simplicity, we send the full answer in one "final" event.
+                    yield format_sse({"type": "thinking", "message": tmsg}) # Keep 'thinking' type for intermediate steps
                 
                 yield format_sse({
-                    "type": "final", # This indicates the final answer payload
+                    "type": "final", 
                     "answer": bot_answer,
-                    "thread_id": returned_thread_id, # Ensure this is the correct thread_id
+                    "thread_id": returned_thread_id, 
                     "references": references,
-                    "thinking": thinking_content # This is the CoT reasoning block
+                    "thinking": thinking_content # This is the main CoT block from LLM
                 })
             except Exception as e_stream:
                 logger.critical(f"Critical unexpected error in /chat SSE stream for user '{user_id}', thread '{thread_id}': {e_stream}", exc_info=True)
@@ -629,17 +659,12 @@ def chat(current_user):
                 yield format_sse({
                     "type": "error",
                     "error": error_message,
-                    "answer": error_message, # Send error as answer
-                    "thread_id": thread_id, # Use the initial thread_id
-                    "thinking": [f"Critical Error in stream: {type(e_stream).__name__}"], # Send error as thinking
+                    "answer": error_message, 
+                    "thread_id": thread_id, 
+                    "thinking": f"Critical Error in stream: {type(e_stream).__name__}", 
                     "references": []
                 })
         try:
-            # Use the helper to collect items from the async generator
-            # This is necessary because Flask route handlers are typically synchronous.
-            # The `stream_with_context` decorator or manually managing the event loop
-            # is needed for true async streaming in Flask.
-            # For this structure, we collect all generated SSE messages and then yield them.
             sse_events = loop.run_until_complete(collect_async_gen(run_query()))
             for event_data in sse_events:
                 yield event_data
@@ -649,72 +674,50 @@ def chat(current_user):
     return Response(stream(), mimetype='text/event-stream')
 
 
+# Legacy /history and /sessions, map to new thread endpoints or remove if Next.js client only uses new ones
 @app.route('/history', methods=['GET'])
 @token_required
-def get_history(current_user):
+def get_history(current_user): # Effectively same as get_thread_history
     user_id = current_user['_id']
-    session_id = request.args.get('session_id') # This is legacy, should be thread_id
-
-    if not app_db_ready:
-        return jsonify({"error": "History unavailable: Database connection failed."}), 503
+    thread_id_param = request.args.get('thread_id') or request.args.get('session_id')
+    if not app_db_ready: return jsonify({"error": "History unavailable: DB connection failed."}), 503
+    if not thread_id_param: return jsonify({"error": "Missing 'thread_id' (or 'session_id') parameter"}), 400
     
-    thread_id_param = request.args.get('thread_id', session_id) # Prioritize 'thread_id'
-    if not thread_id_param:
-        return jsonify({"error": "Missing 'thread_id' (or 'session_id') parameter"}), 400
-
-    messages = database.get_messages_by_thread(user_id, thread_id_param) # Use get_messages_by_thread
-    if messages is None:
-        return jsonify({"error": "Could not retrieve history due to a database error."}), 500
-    else:
-        return jsonify(messages), 200
+    messages = database.get_messages_by_thread(user_id, thread_id_param)
+    if messages is None: return jsonify({"error": "Could not retrieve history or thread empty."}), 404
+    return jsonify(messages), 200
 
 @app.route('/sessions', methods=['GET'])
 @token_required
-def get_sessions(current_user): # This endpoint is now for threads
+def get_sessions(current_user): # Effectively same as get_threads
     user_id = current_user['_id']
-    if not app_db_ready:
-        return jsonify({"error": "Thread list unavailable: Database connection failed."}), 503
+    if not app_db_ready: return jsonify({"error": "Session list unavailable: DB connection failed."}), 503
     
-    threads = database.get_user_threads(user_id) # Use get_user_threads
-    if threads is None:
-        return jsonify({"error": "Could not retrieve threads due to a database error."}), 500
-    else:
-        return jsonify(threads), 200
+    threads = database.get_user_threads(user_id)
+    if threads is None: return jsonify({"error": "Could not retrieve sessions/threads."}), 500
+    return jsonify(threads), 200
 
 
 # New endpoint to serve podcast audio files
 @app.route('/serve_podcast_audio/<path:user_file_path>')
-# Add @token_required if you want to protect audio files.
-# This makes it harder for <audio src="..."> to work directly without workarounds.
-# For now, keeping it open but relying on obscurity of user_id and file_uuid.
 def serve_podcast_audio(user_file_path):
-    # user_file_path is expected to be "user_id_string/actual_audio_filename.mp3"
-    # This path is relative to config.PODCAST_AUDIO_FOLDER
-    
-    # Basic security check to prevent directory traversal
     if ".." in user_file_path or user_file_path.startswith("/"):
         logger.warning(f"Invalid podcast audio path requested: {user_file_path}")
         return "Invalid path", 400
         
-    # The directory for send_from_directory should be the absolute path to PODCAST_AUDIO_FOLDER
-    # send_from_directory will then append user_file_path to it.
     base_podcast_dir = os.path.abspath(config.PODCAST_AUDIO_FOLDER)
-    
-    # Construct the full path to the file
     full_file_path = os.path.join(base_podcast_dir, user_file_path)
 
     if not os.path.exists(full_file_path) or not os.path.isfile(full_file_path):
         logger.warning(f"Podcast audio file not found at: {full_file_path}")
         return "Audio file not found.", 404
         
-    # Ensure the requested path is actually within the intended podcast audio directory
     if not full_file_path.startswith(base_podcast_dir):
         logger.error(f"Attempt to access file outside podcast audio directory: {user_file_path}")
         return "Access denied.", 403
 
     logger.debug(f"Serving podcast audio: {user_file_path} from {base_podcast_dir}")
     try:
-        # send_from_directory takes the directory and then the filename (which can include subdirs)
         return send_from_directory(base_podcast_dir, user_file_path, as_attachment=False)
     except Exception as e:
         logger.error(f"Error serving podcast audio file {user_file_path} from {base_podcast_dir}: {e}", exc_info=True)
@@ -736,18 +739,20 @@ if __name__ == '__main__':
         logger.warning(f"Invalid FLASK_RUN_PORT environment variable. Using default port {port}.")
 
     host = '0.0.0.0'
-    logger.info(f"--- Starting Flask Server ---")
+    logger.info(f"--- Starting Flask Server (API Mode) ---")
     logger.info(f"Serving Flask app '{app.name}'")
     logger.info(f"Configuration:")
     logger.info(f"  - Host: {host}")
     logger.info(f"  - Port: {port}")
-    logger.info(f"  - Ollama URL(s): {config.OLLAMA_BASE_URLS}") # Corrected variable name
+    logger.info(f"  - Ollama URL(s): {config.OLLAMA_BASE_URLS}") 
     logger.info(f"  - LLM Model: {config.OLLAMA_MODEL}")
     logger.info(f"  - Embedding Model: {config.OLLAMA_EMBED_MODEL}")
     logger.info(f"  - Summary Buffer Limit: {config.SUMMARY_BUFFER_TOKEN_LIMIT}")
-    logger.info(f"Access URLs:")
-    logger.info(f"  - Local: http://127.0.0.1:{port} or http://localhost:{port}")
-    logger.info(f"  - Network: http://<YOUR_MACHINE_IP>:{port} (Find your IP using 'ip addr' or 'ifconfig')")
+    logger.info(f"Access URLs (API Endpoints):")
+    logger.info(f"  - Local API Root: http://127.0.0.1:{port}/ or http://localhost:{port}/")
+    logger.info(f"  - Network API Root: http://<YOUR_MACHINE_IP>:{port}/")
+    logger.info(f"Frontend should be accessed via the Next.js development server (e.g., http://localhost:9002).")
+
 
     db_status = 'Ready' if app_db_ready else 'Failed/Unavailable'
     ai_status = 'Ready' if app_ai_ready else 'Failed/Unavailable'
@@ -755,9 +760,6 @@ if __name__ == '__main__':
     logger.info(f"Component Status: DB={db_status} | AI={ai_status} | Index={index_status}")
     logger.info("Press Ctrl+C to stop the server.")
 
-    # For development, Flask's built-in server is fine with debug=True and threaded=True
-    # For production, Waitress is a better choice.
-    # serve(app, host=host, port=port, threads=8) # Production
-    app.run(host=host, port=port, threaded=True, debug=True) # Development
-
+    app.run(host=host, port=port, threaded=True, debug=True) 
+    # For production, consider: serve(app, host=host, port=port, threads=8)
 # --- END OF FILE app.py ---
