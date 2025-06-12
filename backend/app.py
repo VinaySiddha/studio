@@ -760,6 +760,7 @@ if __name__ == '__main__':
     logger.info(f"Component Status: DB={db_status} | AI={ai_status} | Index={index_status}")
     logger.info("Press Ctrl+C to stop the server.")
 
-    app.run(host=host, port=port, threaded=True, debug=True) 
-    # For production, consider: serve(app, host=host, port=port, threads=8)
+    # app.run(host=host, port=port, threaded=True, debug=True, use_reloader=False) 
+    # For production, consider: 
+    serve(app, host=host, port=port, threads=8)
 # --- END OF FILE app.py ---

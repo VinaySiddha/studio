@@ -9,9 +9,9 @@ const FLASK_BACKEND_URL = process.env.NEXT_PUBLIC_FLASK_BACKEND_URL || 'http://l
 
 const ChatApiInputSchema = z.object({
   query: z.string(),
-  documentContent: z.string().optional(), // This will be the document filename or a placeholder
+  documentContent: z.string().optional(), 
   threadId: z.string().optional(),
-  // authToken: z.string(), // Assuming auth is handled if Flask endpoint is protected
+  authToken: z.string().optional(), // Added authToken
 });
 
 export async function POST(request: Request) {
@@ -23,27 +23,25 @@ export async function POST(request: Request) {
       return NextResponse.json({error: 'Invalid input', details: validation.error.format()}, {status: 400});
     }
 
-    const {query, documentContent, threadId, /* authToken */} = validation.data;
+    const {query, documentContent, threadId, authToken } = validation.data;
 
-    // Prepare the request to Flask backend's /chat endpoint
     const flaskRequestBody = {
       query: query,
-      // Flask expects 'documentContent' to be the filename or a placeholder like "No document provided for context."
-      // If no document is selected in frontend, documentContent will be "No document provided for context."
       documentContent: documentContent || "No document provided for context.",
-      thread_id: threadId, // Flask expects thread_id
+      thread_id: threadId,
     };
+
+    const headersToFlask: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    if (authToken) {
+      headersToFlask['Authorization'] = `Bearer ${authToken}`;
+    }
 
     const flaskResponse = await fetch(`${FLASK_BACKEND_URL}/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // If your Flask /chat endpoint is protected, you'll need to pass the auth token
-        // 'Authorization': `Bearer ${authToken}`, 
-      },
+      headers: headersToFlask,
       body: JSON.stringify(flaskRequestBody),
-      // IMPORTANT: For streaming, you might need to handle this differently if not using a simple proxy.
-      // However, Next.js fetch should handle streaming responses if Flask sends them correctly.
     });
 
     if (!flaskResponse.ok || !flaskResponse.body) {
@@ -52,25 +50,19 @@ export async function POST(request: Request) {
       return NextResponse.json({error: errorData.message || errorData.error || 'Failed to connect to Flask chat API.'}, {status: flaskResponse.status});
     }
 
-    // Stream the response from Flask back to the client
     const readableStream = new ReadableStream({
       async start(controller) {
         const reader = flaskResponse.body!.getReader();
-        const decoder = new TextDecoder(); // To decode Flask's SSE chunks
-
         try {
           while (true) {
             const { value, done } = await reader.read();
             if (done) {
               break;
             }
-            // Assuming Flask sends SSE in the format "data: {...}\n\n"
-            // The client-side ChatTutorSection already expects this format.
-            controller.enqueue(value); // Forward the raw chunk
+            controller.enqueue(value); 
           }
         } catch (error: any) {
           console.error('Error streaming from Flask to client:', error);
-          // Try to send an error event through SSE if possible
           const errorEvent = `data: ${JSON.stringify({type: 'error', error: error.message || 'Streaming proxy error'})}\n\n`;
           controller.enqueue(new TextEncoder().encode(errorEvent));
         } finally {
@@ -92,3 +84,7 @@ export async function POST(request: Request) {
     return NextResponse.json({error: error.message || 'An unexpected error occurred in /api/chat.'}, {status: 500});
   }
 }
+// Note: This code is designed to be used in a Next.js API route.
+// It handles POST requests to the /api/chat endpoint, validates input using Zod,
+// and streams responses from a Flask backend chat API.
+// The code includes error handling for both input validation and Flask API communication.
