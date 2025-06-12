@@ -17,17 +17,15 @@ async function fetchFlaskAPI(endpoint: string, options: RequestInit = {}, authTo
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  // Only set Content-Type if body is JSON and not FormData
   if (!(options.body instanceof FormData) && options.body && typeof options.body === 'string') {
     try {
-      JSON.parse(options.body); // Check if body is valid JSON
+      JSON.parse(options.body); 
       if(!headers['Content-Type']) headers['Content-Type'] = 'application/json';
     } catch (e) {
       // Not JSON, or Content-Type already set
     }
   } else if (options.body instanceof FormData) {
-    // For FormData, delete Content-Type header and let browser set it with boundary
-    delete headers['Content-Type'];
+    delete headers['Content-Type']; // Let browser set it with boundary for FormData
   }
 
 
@@ -44,7 +42,12 @@ async function fetchFlaskAPI(endpoint: string, options: RequestInit = {}, authTo
     } else {
         const textResponse = await response.text();
         if (!response.ok) {
-            data = { error: textResponse || `Request failed with status ${response.status}` };
+            // Try to parse as JSON if error, otherwise use text
+            try {
+                data = JSON.parse(textResponse);
+            } catch (e) {
+                data = { error: textResponse || `Request failed with status ${response.status}` };
+            }
         } else {
             return { successText: textResponse } as any; 
         }
@@ -72,7 +75,7 @@ export async function loginUserAction(formData: FormData): Promise<{ user?: User
       method: 'POST',
       body: JSON.stringify({ username: identifier, password: password }),
       headers: {'Content-Type': 'application/json'}
-    }); // No token needed for login
+    }); 
 
     if (flaskResponse && flaskResponse.token && flaskResponse.username) {
       return {
@@ -126,7 +129,7 @@ export async function signupUserAction(formData: FormData): Promise<{ success?: 
       method: 'POST',
       body: JSON.stringify(signupDataForFlask),
       headers: {'Content-Type': 'application/json'}
-    }); // No token needed for registration
+    }); 
 
     if (flaskResponse && (flaskResponse.user_id || flaskResponse.message?.includes("success"))) {
       const loginFormData = new FormData();
@@ -152,13 +155,17 @@ export async function signupUserAction(formData: FormData): Promise<{ success?: 
 export async function listDocumentsAction(userToken: string): Promise<{ uploaded_files: {name: string, securedName: string}[], error?: string }> {
   try {
     const flaskResponse = await fetchFlaskAPI('/documents', { method: 'GET' }, userToken);
-    // Ensure Flask returns an array of objects with { original_filename: "...", filename: "..." }
-    // If it returns list of strings, adapt here or (better) fix Flask response
     const formattedFiles = (flaskResponse.uploaded_files || []).map((file: any) => {
-      if (typeof file === 'string') { // Fallback if Flask returns simple list of names
-        return { name: file, securedName: file };
+      // Flask sends a list of original_filenames, but we need securedName (filename in Flask)
+      // This assumes Flask's Document record has 'original_filename' and 'filename' (secured)
+      // If Flask just sends a list of strings (original_filename), we cannot get securedName here easily.
+      // The Flask /documents endpoint needs to return richer objects.
+      // For now, assuming it returns objects with 'original_filename' and 'filename'
+      if (typeof file === 'object' && file.original_filename && file.filename) {
+        return { name: file.original_filename, securedName: file.filename };
       }
-      return { name: file.original_filename, securedName: file.filename };
+      // Fallback if Flask returns simple list of names (less ideal)
+      return { name: String(file), securedName: String(file) }; 
     });
     return { uploaded_files: formattedFiles };
   } catch (error: any) {
@@ -170,7 +177,7 @@ export async function handleDocumentUploadAction(formData: FormData, userToken: 
   try {
     const flaskResponse = await fetchFlaskAPI('/upload', {
       method: 'POST',
-      body: formData, // FormData sets its own Content-Type
+      body: formData, 
     }, userToken);
     return { 
       message: flaskResponse.message, 
@@ -188,7 +195,14 @@ export async function deleteDocumentAction(userToken: string, documentSecuredNam
     const flaskResponse = await fetchFlaskAPI(`/document/${documentSecuredName}`, {
       method: 'DELETE',
     }, userToken);
-    return { success: true, message: flaskResponse.message || "Document deleted successfully." };
+    // Assuming Flask returns a success message or error in JSON
+    if (flaskResponse.message) {
+      return { success: true, message: flaskResponse.message };
+    } else if (flaskResponse.successText) { // If non-JSON success
+      return { success: true, message: flaskResponse.successText };
+    }
+     // If no specific success message, construct one
+    return { success: true, message: "Document deleted successfully." };
   } catch (error: any) {
     console.error(`Error deleting document ${documentSecuredName} via Flask:`, error);
     return { success: false, error: error.message || "Failed to delete document." };
@@ -196,7 +210,7 @@ export async function deleteDocumentAction(userToken: string, documentSecuredNam
 }
 
 export interface GenerateUtilityFlaskInput {
-  documentName: string; // This should be the secured filename from Flask
+  documentName: string; 
   userToken: string;
 }
 
@@ -205,13 +219,13 @@ export async function generateFaq(input: GenerateUtilityFlaskInput): Promise<{ f
     const flaskResponse = await fetchFlaskAPI('/analyze', {
       method: 'POST',
       body: JSON.stringify({
-        filename: input.documentName, // Pass secured filename
+        filename: input.documentName, 
         analysis_type: 'faq'
       }),
       headers: {'Content-Type': 'application/json'}
     }, input.userToken);
     return {
-      content: flaskResponse.content || flaskResponse.faqList || "No FAQ content from Flask.",
+      content: flaskResponse.content || flaskResponse.faqList || "No FAQ content returned.",
       thinking: flaskResponse.thinking,
       raw: flaskResponse
     };
@@ -324,7 +338,7 @@ export async function getThreadHistoryAction(userToken: string, threadId: string
 export async function renameChatThreadAction(userToken: string, threadId: string, newTitle: string): Promise<{ success?: boolean; message?: string; error?: string }> {
   try {
     const flaskResponse = await fetchFlaskAPI(`/chat/thread/${threadId}/rename`, {
-      method: 'POST', // Assuming POST for rename, adjust if Flask expects PUT/PATCH
+      method: 'POST',
       body: JSON.stringify({ new_title: newTitle }),
       headers: { 'Content-Type': 'application/json' },
     }, userToken);

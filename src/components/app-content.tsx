@@ -16,13 +16,14 @@ import {
   handleDocumentUploadAction,
   deleteDocumentAction
 } from '@/app/actions';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'; // Removed AlertDialogTrigger as it's managed internally now
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
-// Removed Button, Trash2, MessageSquareText, BookOpenText as they are not directly used here, but in child components
+import { Button } from '@/components/ui/button';
+import { ToggleLeft, ToggleRight, MessageCircle, BookOpen } from 'lucide-react';
 
 export interface DocumentFile {
-  name: string; // Original filename for display
-  securedName: string; // Secured filename (e.g., with UUID) for API calls
+  name: string; 
+  securedName: string; 
 }
 
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
@@ -56,7 +57,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   const fetchDocuments = async () => {
     if (user?.token) {
-      setAnalysisStatusText("Loading documents from server...");
+      setAnalysisStatusText("Loading documents...");
       try {
         const result = await listDocumentsAction(user.token);
         if (result.error) {
@@ -64,12 +65,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           setAnalysisStatusText(`Error: ${result.error}`);
           setUploadedDocs([]);
         } else {
-          // Expecting result.uploaded_files to be DocumentFile[]
-          const docs: DocumentFile[] = result.uploaded_files || [];
+          const docs: DocumentFile[] = (result.uploaded_files || []).map(f => ({ name: f.name, securedName: f.securedName }));
           setUploadedDocs(docs);
 
           if (docs.length === 0) {
-            setAnalysisStatusText("No documents found on server. Upload a file.");
+            setAnalysisStatusText("No documents uploaded. Upload a file to begin.");
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
             if (chatMode === 'document') setChatMode('general');
@@ -79,9 +79,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                 setSelectedDocSecuredName(null); 
                 setSelectedDocOriginalName(null);
                 if (chatMode === 'document') setChatMode('general');
-            } else if (!selectedDocSecuredName && docs.length > 0) {
-                // Optionally auto-select first document if none is selected
-                // handleSelectDocument(docs[0].securedName); 
             }
           }
         }
@@ -104,8 +101,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       return;
     }
     setIsUploading(true);
-    setUploadStatusText(`Uploading ${file.name} to server...`);
-    toast({ title: "Uploading Document", description: `Sending ${file.name} to the server...` });
+    setUploadStatusText(`Uploading ${file.name}...`);
+    toast({ title: "Uploading Document", description: `Sending ${file.name}...` });
 
     const formData = new FormData();
     formData.append('file', file);
@@ -113,7 +110,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     try {
       const result = await handleDocumentUploadAction(formData, user.token);
       if (result.error || !result.filename || !result.original_filename) {
-        throw new Error(result.error || "Upload failed to return necessary file information.");
+        throw new Error(result.error || "Upload failed: Missing file information from server.");
       }
       
       setUploadStatusText(`Successfully uploaded ${result.original_filename}.`);
@@ -121,7 +118,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       
       await fetchDocuments(); 
 
-      setSelectedDocSecuredName(result.filename); // securedName from Flask is 'filename'
+      setSelectedDocSecuredName(result.filename); 
       setSelectedDocOriginalName(result.original_filename);
       setChatMode('document'); 
       
@@ -139,9 +136,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     if (selected) {
       setSelectedDocSecuredName(selected.securedName);
       setSelectedDocOriginalName(selected.name);
-      setChatMode('document'); // Default to document chat when a doc is selected
+      setChatMode('document'); 
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
-      toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and chat.` });
+      toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
     }
   };
 
@@ -151,7 +148,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         setChatMode('document');
         toast({ title: "Chat Mode Switched", description: `Now chatting about ${selectedDocOriginalName}.` });
       } else {
-        toast({ variant: "default", title: "Select Document", description: "Please select a document to switch to document chat mode." });
+        toast({ variant: "default", title: "Select Document for Document Chat", description: "Please select a document first to switch to document-specific chat mode." });
       }
     } else {
       setChatMode('general');
@@ -242,6 +239,27 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   return (
     <>
+      <div className="mb-6 flex justify-center items-center">
+        <Button 
+            onClick={handleToggleChatMode} 
+            variant="outline" 
+            className="btn-glow-primary-hover shadow-md"
+            disabled={chatMode === 'document' ? false : (!selectedDocSecuredName && uploadedDocs.length > 0)}
+            title={
+              chatMode === 'general' 
+                ? (selectedDocSecuredName ? "Switch to Document Chat" : "Select a document to enable document-specific chat") 
+                : "Switch to General Chat"
+            }
+          >
+            {chatMode === 'general' ? <MessageCircle className="mr-2 h-5 w-5" /> : <BookOpen className="mr-2 h-5 w-5 text-primary" />}
+            {chatMode === 'general' ? 'General Chat Mode' : 'Document Chat Mode'}
+            {chatMode === 'document' && selectedDocOriginalName ? <span className="ml-2 text-xs text-muted-foreground truncate max-w-[150px]">({selectedDocOriginalName})</span> : ''}
+          </Button>
+          {chatMode === 'general' && !selectedDocSecuredName && uploadedDocs.length > 0 && (
+            <p className="ml-3 text-xs text-muted-foreground">Select a document in "Document Hub" to enable document-specific chat.</p>
+          )}
+      </div>
+
       <div className="flex flex-col lg:flex-row gap-8">
         <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8">
           <DocumentUploadSection 
@@ -258,9 +276,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             analysisStatusText={analysisStatusText}
             isDocumentSelected={!!selectedDocSecuredName}
             onDeleteDocument={(doc) => setDocToDelete(doc)}
-            currentChatMode={chatMode}
-            onToggleChatMode={handleToggleChatMode}
-            canToggleToDocumentMode={!!selectedDocSecuredName}
           />
         </div>
         <div className="w-full lg:w-[65%] xl:w-[70%]">
@@ -268,7 +283,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             documentName={documentNameForChat} 
             user={user}
             onClearDocumentContext={() => {
-              // This is called when "New Chat" is clicked in ChatTutorSection
               setSelectedDocSecuredName(null);
               setSelectedDocOriginalName(null);
               setChatMode('general'); 

@@ -3,9 +3,9 @@ import type { FC } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { DocumentFile, ChatMode } from '@/components/app-content'; 
+import type { DocumentFile } from '@/components/app-content'; 
 import type { UtilityAction } from '@/components/app-content'; 
-import { Lightbulb, ListOrdered, Brain, Podcast, FileText, Loader2, Trash2, MessageSquareText, BookOpenText, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Lightbulb, ListOrdered, Brain, Podcast, FileText, Loader2, Trash2 } from 'lucide-react';
 
 interface DocumentUtilitiesSectionProps {
   documents: DocumentFile[];
@@ -16,9 +16,7 @@ interface DocumentUtilitiesSectionProps {
   analysisStatusText: string;
   isDocumentSelected: boolean;
   onDeleteDocument: (doc: DocumentFile) => void;
-  currentChatMode: ChatMode;
-  onToggleChatMode: () => void;
-  canToggleToDocumentMode: boolean;
+  // Chat mode toggle is removed from here
 }
 
 const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
@@ -30,9 +28,6 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
   analysisStatusText,
   isDocumentSelected,
   onDeleteDocument,
-  currentChatMode,
-  onToggleChatMode,
-  canToggleToDocumentMode
 }) => {
 
   const selectedDocument = documents.find(d => d.securedName === selectedDocumentSecuredName);
@@ -83,28 +78,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
           </div>
         </div>
         
-        <div>
-          <label className="block text-sm font-medium mb-1">Chat Mode:</label>
-          <Button 
-            onClick={onToggleChatMode} 
-            variant="outline" 
-            className="w-full btn-glow-primary-hover"
-            disabled={currentChatMode === 'document' ? false : (!canToggleToDocumentMode && documents.length > 0)}
-            title={
-              currentChatMode === 'general' 
-                ? (canToggleToDocumentMode ? "Switch to Document Chat" : "Select a document to enable document chat") 
-                : "Switch to General Chat"
-            }
-          >
-            {currentChatMode === 'general' ? <ToggleLeft className="mr-2 h-4 w-4" /> : <ToggleRight className="mr-2 h-4 w-4 text-primary" />}
-            {currentChatMode === 'general' ? 'General Chat' : 'Document Chat'}
-            {currentChatMode === 'document' && selectedDocument ? <span className="ml-1 text-xs truncate max-w-[100px]">({selectedDocument.name})</span> : ''}
-          </Button>
-          {currentChatMode === 'general' && !canToggleToDocumentMode && documents.length > 0 && (
-            <p className="text-xs text-muted-foreground mt-1">Select a document to enable document-specific chat.</p>
-          )}
-        </div>
-
+        {/* Chat Mode toggle has been moved to AppContent.tsx */}
 
         <div>
             <label className="block text-sm font-medium mb-1">Document Utilities:</label>

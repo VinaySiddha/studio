@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ChatMessage, { type Message as MessageType } from '@/components/chat-message';
-import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react'; // Added Check
+import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDFooter, AlertDialogHeader as AlertDHeader, AlertDialogTitle as AlertDTitle } from '@/components/ui/alert-dialog';
@@ -89,7 +89,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
     setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentName]);
+  }, [documentName]); // React to documentName changes for context
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -146,7 +146,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     try {
       const requestBody = {
         query: query,
-        documentContent: documentName || "No document provided for context.", // Use documentName prop
+        documentContent: documentName || "No document provided for context.",
         threadId: currentThreadId,
         authToken: user.token, 
       };
@@ -318,10 +318,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages(fetchedMessages);
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
-      setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
+      setChatStatusText(`Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
       if (fetchedMessages.length === 0) {
           toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
           setMessages([{id: 'empty-thread-msg', sender: 'ai', text: "This chat is empty. Ask something!", timestamp: new Date()}]);
+      } else {
+        toast({ title: "Chat History Loaded", description: `Loaded session ${threadIdToLoad.substring(0,8)}...`});
       }
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error Loading History", description: error.message });
@@ -337,7 +339,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     if (!threadToRename || !newThreadTitle.trim() || !user.token) return;
     const oldTitle = threadToRename.title;
     const threadIdToUpdate = threadToRename.thread_id;
-    setThreadToRename(null); 
+    
     toast({ title: `Renaming thread to "${newThreadTitle}"...` });
     try {
       const result = await renameChatThreadAction(user.token, threadIdToUpdate, newThreadTitle.trim());
@@ -350,6 +352,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     } catch (error: any) {
       toast({ variant: "destructive", title: "Rename Failed", description: error.message });
     }
+    setThreadToRename(null); 
     setNewThreadTitle("");
   };
 
@@ -357,7 +360,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     if (!threadToDelete || !user.token) return;
     const titleToDelete = threadToDelete.title;
     const idToDelete = threadToDelete.thread_id;
-    setThreadToDelete(null); 
+    
     toast({ title: `Deleting thread "${titleToDelete}"...` });
     try {
       const result = await deleteChatThreadAction(user.token, idToDelete);
@@ -376,6 +379,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     } catch (error: any) {
       toast({ variant: "destructive", title: "Deletion Failed", description: error.message });
     }
+    setThreadToDelete(null);
   };
   
   const startRecording = async () => {
@@ -393,15 +397,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // Standard webm
+        stream.getTracks().forEach(track => track.stop()); // Stop mic access immediately after recording stops
+
         if (audioBlob.size === 0) {
             toast({title: "No audio recorded.", variant: "warning"});
-            stream.getTracks().forEach(track => track.stop());
+            setIsRecording(false); // Reset recording state
+            setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
             return;
         }
         
         toast({title: "Transcribing audio..."});
-        setIsLoading(true); // Indicate loading for transcription
+        setIsLoading(true); 
         setChatStatusText("Transcribing audio...");
         const formData = new FormData();
         formData.append('audio', audioBlob, 'user_audio.webm'); 
@@ -421,32 +428,30 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
         } finally {
             setIsLoading(false);
+            setIsRecording(false); // Ensure recording state is reset
             setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
         }
-        
-        stream.getTracks().forEach(track => track.stop());
       };
       mediaRecorderRef.current.start();
       setIsRecording(true);
       setChatStatusText("Recording audio...");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error starting recording:", err);
-      toast({title: "Microphone Error", description: "Could not access microphone.", variant: "destructive"});
+      toast({title: "Microphone Error", description: `Could not access microphone: ${err.message}`, variant: "destructive"});
       setChatStatusText("Mic access denied.");
-      setIsRecording(false); // Ensure recording state is reset
+      setIsRecording(false); 
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      // Status text will be updated by onstop handler or its finally block
+      // UI state changes (isRecording, chatStatusText) will be handled in onstop
     }
   };
 
   return (
-    <Card className="h-full flex flex-col glass-panel rounded-lg">
+    <Card className="h-full flex flex-col glass-panel rounded-lg shadow-xl">
       <CardHeader className="pb-2 border-b border-border/50">
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center text-xl font-headline">
@@ -498,7 +503,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                                 onClick={() => loadChatHistory(thread.thread_id)}
                             >
                                 <div className="flex flex-col">
-                                <span className="font-medium text-sm truncate max-w-[250px] sm:max-w-[300px] md:max-w-[350px]">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
+                                <span className="font-medium text-sm truncate max-w-[200px] sm:max-w-[250px] md:max-w-[300px]">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
                                 <span className="text-xs text-muted-foreground">
                                     Updated: {new Date(thread.last_updated).toLocaleString()}
                                 </span>
@@ -530,8 +535,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           </div>
         </div>
       </CardHeader>
-      <CardContent className="flex-grow overflow-hidden p-0">
-        <ScrollArea className="h-full max-h-[calc(100vh-25rem)] p-4" ref={scrollAreaRef}> 
+      <CardContent className="flex-grow overflow-hidden p-0 flex flex-col">
+        <ScrollArea className="flex-grow p-4" ref={scrollAreaRef}> 
           {messages.map((msg) => (
             <ChatMessage
               key={msg.id}
@@ -571,7 +576,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             className="flex-1"
             disabled={isLoading || !user.token}
           />
-          <Button variant="outline" size="icon" type="button" disabled={!isLoading} onClick={handleStopStream} title="Stop AI Response">
+          <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null} onClick={handleStopStream} title="Stop AI Response">
             <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>
           </Button>
           <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token} className="btn-glow-primary-hover">
