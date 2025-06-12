@@ -91,7 +91,7 @@ export type ExternalData = z.infer<typeof ExternalDataSchema>;
 export async function fetchExternalData(id: number): Promise<ExternalData> {
   try {
     // Replace this URL with your actual backend API endpoint
-    const response = await fetch(`https://jsonplaceholder.typicode.com/todos/${id}`);
+    const response = await fetch(`http://localhost:5000/todos/${id}`);
     
     if (!response.ok) {
       // You might want to handle different statuses differently
