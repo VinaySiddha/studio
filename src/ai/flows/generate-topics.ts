@@ -1,4 +1,4 @@
-'use server';
+
 
 /**
  * @fileOverview Generates the main topics covered in a document.

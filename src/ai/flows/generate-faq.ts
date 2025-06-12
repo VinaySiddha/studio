@@ -1,4 +1,4 @@
-'use server';
+
 
 /**
  * @fileOverview Generates frequently asked questions (FAQ) based on the content of a document.

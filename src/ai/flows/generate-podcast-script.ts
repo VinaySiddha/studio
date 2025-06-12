@@ -1,4 +1,4 @@
-'use server';
+
 
 /**
  * @fileOverview This file defines a Genkit flow for generating a podcast script from a given document.

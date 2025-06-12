@@ -1,4 +1,4 @@
-'use server';
+
 
 /**
  * @fileOverview This file defines a Genkit flow for generating a mind map from a document.
