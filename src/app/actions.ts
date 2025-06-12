@@ -1,3 +1,4 @@
+
 // src/app/actions.ts
 'use server';
 
@@ -27,7 +28,113 @@ import {
   type GeneratePodcastScriptInput,
   type GeneratePodcastScriptOutput
 } from '@/ai/flows/generate-podcast-script';
+import type { User } from '@/app/page'; // Assuming User type is in page.tsx
 
+// --- Authentication Actions ---
+
+// Mock user database for demonstration
+const mockUsers: Record<string, Omit<User, 'token'> & { passwordHash: string }> = {
+  "testuser": { username: "testuser", passwordHash: "hashedpassword", email: "test@example.com", firstname: "Test", lastname: "User" },
+};
+const mockTokens: Record<string, string> = {
+  "testuser": "fake-auth-token-for-testuser"
+};
+
+
+export async function loginUserAction(formData: FormData): Promise<{ user?: User, error?: string }> {
+  const identifier = formData.get('identifier') as string;
+  const password = formData.get('password') as string;
+
+  // Simulate backend call & validation
+  await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+
+  const userEntry = Object.values(mockUsers).find(u => u.username === identifier || u.email === identifier);
+
+  if (userEntry && password === "password") { // Simplified password check for mock
+    const token = mockTokens[userEntry.username] || `fake-token-${Date.now()}`;
+    mockTokens[userEntry.username] = token; // Store/update token
+    return {
+      user: {
+        username: userEntry.username,
+        token: token,
+        firstname: userEntry.firstname,
+        lastname: userEntry.lastname,
+        email: userEntry.email,
+      }
+    };
+  } else {
+    return { error: "Invalid username/email or password." };
+  }
+}
+
+const SignupFormSchema = z.object({
+  firstname: z.string().min(1, "First name is required"),
+  lastname: z.string().min(1, "Last name is required"),
+  username: z.string().min(3, "Username must be at least 3 characters"),
+  gender: z.string().optional(), // Or z.enum(["male", "female", "other"]) if you have fixed values
+  mobile: z.string().optional(),
+  email: z.string().email("Invalid email address"),
+  organization: z.string().optional(),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  confirmPassword: z.string()
+}).refine(data => data.password === data.confirmPassword, {
+  message: "Passwords do not match",
+  path: ["confirmPassword"],
+});
+
+
+export async function signupUserAction(formData: FormData): Promise<{ user?: User, error?: string }> {
+  const rawFormData = Object.fromEntries(formData.entries());
+  const validation = SignupFormSchema.safeParse(rawFormData);
+
+  if (!validation.success) {
+    // Concatenate all error messages
+    const errorMessages = validation.error.errors.map(e => `${e.path.join('.') || 'Error'}: ${e.message}`).join('; ');
+    return { error: errorMessages || "Invalid signup data." };
+  }
+
+  const { firstname, lastname, username, email, password, gender, mobile, organization } = validation.data;
+
+  // Simulate backend call & validation
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  if (mockUsers[username]) {
+    return { error: "Username already exists." };
+  }
+  if (Object.values(mockUsers).some(u => u.email === email)) {
+    return { error: "Email already registered." };
+  }
+
+  const newUser: Omit<User, 'token'> & { passwordHash: string } = {
+    username,
+    passwordHash: `hashed-${password}`, // Simulate hashing
+    email,
+    firstname,
+    lastname,
+    gender,
+    mobile,
+    organization,
+  };
+  mockUsers[username] = newUser;
+  const token = `fake-token-${Date.now()}`;
+  mockTokens[username] = token;
+
+  return {
+    user: {
+      username,
+      token,
+      firstname,
+      lastname,
+      email,
+      gender,
+      mobile,
+      organization,
+    }
+  };
+}
+
+
+// --- Existing AI Actions ---
 export async function chatTutor(input: ChatTutorInput): Promise<ChatTutorOutput> {
   try {
     return await chatTutorFlow(input);

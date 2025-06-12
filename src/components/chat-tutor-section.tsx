@@ -1,3 +1,4 @@
+
 'use client';
 import type { FC, FormEvent } from 'react';
 import { useState, useRef, useEffect } from 'react';
@@ -10,23 +11,33 @@ import { MessageSquare, SendHorizontal, Loader2 } from 'lucide-react';
 import { chatTutor } from '@/app/actions'; // Server action
 
 interface ChatTutorSectionProps {
-  documentContent: string | null;
+  documentContent: string | null; // Current way; JS logic implies thread_id based context
+  username: string; // For potential display or context
+  // TODO: Add props for threadId, backendStatus if adapting full JS logic
 }
 
-const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
+const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent, username }) => {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("Ready | 0 Vectors"); // Placeholder
+  // TODO: Replace with backend status and thread ID logic from JS
+  const [status, setStatus] = useState("Ready | 0 Vectors"); 
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // This effect is simplified. The JS code has more complex status updates
+    // based on backend status, thread ID, and document vectors.
     if (documentContent) {
-      setStatus(`Ready | ${Math.floor(Math.random() * 500) + 100} Vectors`); // Simulate vector count
+      setStatus(`Context: Active Document | ${Math.floor(Math.random() * 500) + 100} Vectors (mock)`);
     } else {
-      setStatus("Upload a document to begin");
+      setStatus("Upload/select a document to provide context");
     }
-  }, [documentContent]);
+    // Simulate session ID from JS logic (this would typically come from backend or be managed)
+    if (!sessionId) {
+      setSessionId((Math.random() + 1).toString(36).substring(7));
+    }
+  }, [documentContent, sessionId]);
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -39,7 +50,16 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !documentContent) return;
+    // TODO: The JS code's `handleSendMessage` is much more complex:
+    // - Uses `currentThreadId`
+    // - Handles streaming responses with 'thinking', 'chunk', 'final', 'error' types.
+    // - Manages abortController, pause/stop.
+    // - This current implementation is simplified and uses the existing chatTutor action.
+    if (!inputValue.trim()) return;
+    if (!documentContent && !confirm("No document is selected for context. Send message anyway?")) {
+        return;
+    }
+
 
     const userMessage: MessageType = {
       id: Date.now().toString() + 'user',
@@ -48,12 +68,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMessage]);
+    const currentInput = inputValue;
     setInputValue('');
     setIsLoading(true);
     setStatus("AI is thinking...");
 
     try {
-      const aiResponse = await chatTutor({ documentContent, question: userMessage.text });
+      // The JS logic has a dedicated /chat endpoint. This uses the existing chatTutor action.
+      // This action expects documentContent. If we move to thread-based context, this needs to change.
+      const aiResponse = await chatTutor({ 
+        documentContent: documentContent || "User is asking a general question without document context.", // Provide fallback if no doc
+        question: currentInput 
+      });
       const aiMessage: MessageType = {
         id: Date.now().toString() + 'ai',
         sender: 'ai',
@@ -72,7 +98,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
-      setStatus(`Ready | ${Math.floor(Math.random() * 500) + 100} Vectors`);
+      // Simplified status update
+      if (documentContent) {
+        setStatus(`Context: Active Document | ${Math.floor(Math.random() * 500) + 100} Vectors (mock)`);
+      } else {
+        setStatus("Upload/select a document to provide context");
+      }
     }
   };
 
@@ -86,15 +117,15 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
           </CardTitle>
           <p className="text-xs text-muted-foreground">{status}</p>
         </div>
-        <p className="text-xs text-muted-foreground ml-8">Session ID: {(Math.random() + 1).toString(36).substring(7)}</p>
+        {sessionId && <p className="text-xs text-muted-foreground ml-8">Session ID: {sessionId}</p>}
       </CardHeader>
       <CardContent className="flex-grow overflow-hidden p-0">
         <ScrollArea className="h-full max-h-[calc(100vh-20rem)] p-4" ref={scrollAreaRef}>
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <MessageSquare size={48} className="mb-4" />
-              <p>Ask questions about the uploaded document.</p>
-              {!documentContent && <p className="text-sm mt-1">Please upload a document first.</p>}
+              <p>Ask questions about the selected document, or general questions.</p>
+              {!documentContent && <p className="text-sm mt-1">No document selected for specific context.</p>}
             </div>
           )}
           {messages.map((msg) => (
@@ -103,16 +134,17 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentContent }) => {
         </ScrollArea>
       </CardContent>
       <CardFooter className="p-4 border-t border-border/50">
+        {/* TODO: The JS code includes voice input, pause, stop buttons. These are not yet implemented here. */}
         <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-2">
           <Input
             type="text"
-            placeholder={documentContent ? "Ask about the document..." : "Upload a document first..."}
+            placeholder={documentContent ? "Ask about the document..." : "Ask a general question..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             className="flex-1"
-            disabled={isLoading || !documentContent}
+            disabled={isLoading /* TODO: || !backendIsReady from JS logic */}
           />
-          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !documentContent} className="btn-glow-primary-hover">
+          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() /* TODO: || !backendIsReady */} className="btn-glow-primary-hover">
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
             <span className="sr-only">Send</span>
           </Button>
