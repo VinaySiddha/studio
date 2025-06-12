@@ -7,13 +7,22 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ChatMessage, { type Message as MessageType, type Reference } from '@/components/chat-message';
-import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History } from 'lucide-react';
+import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, X } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog';
+import { listChatThreadsAction, getThreadHistoryAction, createNewChatThreadAction } from '@/app/actions';
 
 interface ChatTutorSectionProps {
-  documentName: string | null; // Name of the currently selected document for context
+  documentName: string | null; 
   username: string;
-  authToken: string | null; // Auth token for API calls
+  authToken: string | null; 
+}
+
+interface Thread {
+  thread_id: string;
+  title: string;
+  last_updated: string; 
+  // Add other fields if your Flask backend provides them
 }
 
 const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, authToken }) => {
@@ -24,13 +33,15 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
   const [chatStatusText, setChatStatusText] = useState("Initializing...");
   const [thinkingMessage, setThinkingMessage] = useState<string | null>(null);
   const [isMediaRecorderSupported, setIsMediaRecorderSupported] = useState(false);
+  
+  const [isSessionsDialogOpen, setIsSessionsDialogOpen] = useState(false);
+  const [availableThreads, setAvailableThreads] = useState<Thread[]>([]);
+  const [isLoadingThreads, setIsLoadingThreads] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
-  const FLASK_BACKEND_URL = process.env.NEXT_PUBLIC_FLASK_BACKEND_URL || 'http://localhost:5000';
-
-
+  
   useEffect(() => {
     setIsMediaRecorderSupported(
       typeof window !== 'undefined' &&
@@ -42,21 +53,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
     const storedThreadId = localStorage.getItem('aiTutorThreadId');
     if (storedThreadId) {
       setCurrentThreadId(storedThreadId);
-      // TODO: Implement loadChatHistory(storedThreadId) if Flask backend supports it
-      // For now, we assume Flask handles history based on thread_id passed in /chat
+      loadChatHistory(storedThreadId);
       setChatStatusText(`Ready (Thread: ${storedThreadId.substring(0,8)}...)`);
-      // If using Flask for history, call a function to load it here.
-      // loadFlaskChatHistory(storedThreadId);
-    } else if (messages.length === 0) {
-       setMessages([{
-          id: 'initial-bot-message',
-          sender: 'ai',
-          text: documentName ? `Ask me anything about ${documentName}!` : "Upload or select a document to chat about, or ask a general question.",
-          timestamp: new Date(),
-        }]);
-       setChatStatusText("Ready");
+    } else {
+      setMessages([{
+        id: 'initial-bot-message',
+        sender: 'ai',
+        text: documentName ? `Ask me anything about ${documentName}!` : "Upload or select a document to chat about, or ask a general question.",
+        timestamp: new Date(),
+      }]);
+      setChatStatusText("Ready");
     }
-  }, [documentName]); // Re-evaluate initial message if documentName changes
+  }, [documentName]); 
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -110,26 +118,17 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
       isLoading: true,
     }]);
 
-    // Determine if we use Next.js /api/chat (Genkit) or Flask /chat
-    // For this example, we'll keep using the Next.js Genkit stream for chat.
-    // If Flask is to handle chat, this fetch call needs to target Flask.
-    const chatApiEndpoint = '/api/chat'; // Stays as Next.js API route using Genkit
-    // const chatApiEndpoint = `${FLASK_BACKEND_URL}/chat`; // If Flask handles chat
-
     try {
       const requestBody = {
         query: query,
-        documentContent: documentName, // If Next.js /api/chat needs filename for context
-                                       // Or send full content if that's how your Genkit prompt is set up
+        documentContent: documentName || "No document provided for context.", // Pass filename or placeholder
         threadId: currentThreadId,
+        // authToken: authToken, // Pass token if /api/chat needs it for Flask
       };
       
-      const response = await fetch(chatApiEndpoint, {
+      const response = await fetch('/api/chat', { // Calls Next.js API route which proxies to Flask
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          // 'Authorization': `Bearer ${authToken}` // Add if chatApiEndpoint is Flask and secured
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: abortControllerRef.current.signal,
       });
@@ -151,14 +150,17 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
           if (sseMessage.startsWith('data: ')) {
             try {
               const data = JSON.parse(sseMessage.substring(6));
-              if (data.type === 'chunk' && data.content) {
+              if (data.type === 'thinking' && data.message) {
+                // Flask's /chat stream sends thinking messages
+                setThinkingMessage(data.message);
+              } else if (data.type === 'chunk' && data.content) {
                 currentAiMessageText += data.content;
                 setMessages((prev) => prev.map(msg =>
                   msg.id === currentAiMessageId ? { ...msg, text: currentAiMessageText, isLoading: true } : msg
                 ));
               } else if (data.type === 'final') {
-                currentAiMessageText += data.answer || ''; // Ensure final answer part is appended
-                const finalThreadId = data.threadId || currentThreadId;
+                currentAiMessageText = data.answer || currentAiMessageText || ""; // Ensure final answer part is appended or replaces if it's the whole answer
+                const finalThreadId = data.thread_id || currentThreadId;
                 if (finalThreadId && finalThreadId !== currentThreadId) {
                   setCurrentThreadId(finalThreadId);
                   localStorage.setItem('aiTutorThreadId', finalThreadId);
@@ -168,18 +170,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
                     ...msg,
                     text: currentAiMessageText || "[AI response finished]",
                     references: data.references || [],
-                    thinking: data.thinking,
+                    thinking: data.thinking, // This is the CoT block from Flask
                     isLoading: false
                   } : msg
                 ));
                 setIsLoading(false);
-                setThinkingMessage(null);
+                setThinkingMessage(null); // Clear intermediate thinking message
                 setChatStatusText(`Ready (Thread: ${finalThreadId?.substring(0,8)}...)`);
               } else if (data.type === 'error') {
-                throw new Error(data.message || 'Stream error from server.');
+                throw new Error(data.error || data.message || 'Stream error from server.');
               }
             } catch (parseError) {
-              console.error('SSE parse error:', parseError, sseMessage);
+              console.error('SSE parse error:', parseError, "Raw SSE:", sseMessage);
             }
           }
         }
@@ -205,7 +207,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
       if (messages.find(m => m.id === currentAiMessageId && m.isLoading)) {
         setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete]" : m.text } : m));
       }
-      setChatStatusText(prev => prev.startsWith("Error:") ? prev : `Ready (Thread: ${currentThreadId?.substring(0,8)}...)`);
+       const finalStatusThreadId = currentThreadId || "New Chat";
+      setChatStatusText(prev => prev.startsWith("Error:") ? prev : `Ready (Thread: ${finalStatusThreadId === "New Chat" ? "New" : finalStatusThreadId.substring(0,8)}...)`);
     }
   };
   
@@ -223,7 +226,6 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
   const handleFeedback = (messageId: string, feedbackType: 'like' | 'dislike') => {
     setMessages(prev => prev.map(m => m.id === messageId ? {...m, feedback: feedbackType } : m));
     toast({ title: `Feedback: ${feedbackType}` });
-    // TODO: Send feedback to Flask backend if it supports it
   };
 
   const handleNewChat = async () => {
@@ -231,45 +233,93 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
         toast({variant: "destructive", title: "Error", description: "Login to start a new chat."});
         return;
     }
-    // This logic assumes new chat thread creation is handled by Flask
-    // or that clearing local thread ID is enough if Next.js /api/chat handles threads.
-    // For Flask:
-    // try {
-    //   const response = await fetch(`${FLASK_BACKEND_URL}/chat/thread`, { /* or similar endpoint */
-    //     method: 'POST',
-    //     headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({ title: "New Chat " + new Date().toISOString() })
-    //   });
-    //   const data = await response.json();
-    //   if (!response.ok) throw new Error(data.error || "Failed to create new thread on Flask.");
-    //   setCurrentThreadId(data.thread_id);
-    //   localStorage.setItem('aiTutorThreadId', data.thread_id);
-    //   setMessages([{ id: 'new-chat-initial-msg', sender: 'ai', text: "New chat started with Flask. Ask away!", timestamp: new Date() }]);
-    //   setChatStatusText(`Ready (Thread: ${data.thread_id.substring(0,8)}...)`);
-    //   toast({ title: "New Chat Started (Flask)" });
-    // } catch (error: any) {
-    //   toast({ variant: "destructive", title: "New Chat Error", description: error.message });
-    // }
-
-    // For current Genkit-based chat:
-    localStorage.removeItem('aiTutorThreadId');
-    setCurrentThreadId(null);
-    setMessages([{
-      id: 'new-chat-initial-msg',
-      sender: 'ai',
-      text: "Started a new chat. Ask your question!",
-      timestamp: new Date(),
-    }]);
-    setChatStatusText("Ready (New Chat)");
-    toast({ title: "New Chat Started" });
+    setIsLoading(true);
+    setChatStatusText("Starting new chat...");
+    try {
+      const result = await createNewChatThreadAction(authToken, "New Chat " + new Date().toLocaleTimeString());
+      if (result.error || !result.thread_id) {
+        throw new Error(result.error || "Failed to create new thread on Flask backend.");
+      }
+      setCurrentThreadId(result.thread_id);
+      localStorage.setItem('aiTutorThreadId', result.thread_id);
+      setMessages([{
+        id: 'new-chat-initial-msg-' + result.thread_id,
+        sender: 'ai',
+        text: "New chat session started. How can I help you?",
+        timestamp: new Date(),
+      }]);
+      setChatStatusText(`Ready (Thread: ${result.thread_id.substring(0,8)}...)`);
+      toast({ title: "New Chat Started" });
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "New Chat Error", description: error.message });
+      setChatStatusText("Error starting new chat.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleShowSessions = () => {
-    // TODO: Implement session loading from Flask and display logic
-    // This would involve fetching a list of threads from Flask, e.g., GET /threads
-    // then displaying them in a modal or list for selection.
-    toast({ title: "Show Previous Sessions (Not Implemented with Flask yet)", description: "This would show past conversations from Flask." });
+  const handleShowSessions = async () => {
+    if (!authToken) {
+      toast({ variant: "destructive", title: "Error", description: "Login to view sessions." });
+      return;
+    }
+    setIsLoadingThreads(true);
+    setIsSessionsDialogOpen(true); 
+    try {
+      const result = await listChatThreadsAction(authToken);
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      setAvailableThreads(result.threads || []);
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Error Loading Sessions", description: error.message });
+      setAvailableThreads([]);
+    } finally {
+      setIsLoadingThreads(false);
+    }
   };
+
+  const loadChatHistory = async (threadIdToLoad: string) => {
+    if (!authToken) {
+      toast({ variant: "destructive", title: "Authentication Error", description: "Cannot load history." });
+      return;
+    }
+    setIsLoading(true);
+    setChatStatusText(`Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
+    setMessages([]); // Clear current messages
+    try {
+      const result = await getThreadHistoryAction(authToken, threadIdToLoad);
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      const fetchedMessages: MessageType[] = (result.messages || []).map((msg: any) => ({
+        id: msg.message_id || msg._id || String(Date.now() + Math.random()),
+        sender: msg.sender,
+        text: msg.message_text,
+        timestamp: new Date(msg.timestamp),
+        references: msg.references || [], // Assuming Flask parses references_json
+        thinking: msg.thinking || msg.cot_reasoning,
+        isEdited: msg.is_edited,
+        isError: msg.is_error,
+      }));
+      setMessages(fetchedMessages);
+      setCurrentThreadId(threadIdToLoad);
+      localStorage.setItem('aiTutorThreadId', threadIdToLoad);
+      setChatStatusText(`Ready (Thread: ${threadIdToLoad.substring(0,8)}...)`);
+      if (fetchedMessages.length === 0) {
+          toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
+          setMessages([{id: 'empty-thread-msg', sender: 'ai', text: "This chat is empty. Ask something!", timestamp: new Date()}]);
+      }
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Error Loading History", description: error.message });
+      setChatStatusText("Error loading history.");
+      setMessages([{id: 'load-error-msg', sender: 'ai', text: `Error loading chat: ${error.message}`, timestamp: new Date(), isError: true}]);
+    } finally {
+      setIsLoading(false);
+      setIsSessionsDialogOpen(false);
+    }
+  };
+
 
   return (
     <Card className="h-full flex flex-col glass-panel rounded-lg">
@@ -284,9 +334,53 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
             <Button variant="outline" size="sm" onClick={handleNewChat} title="Start a new chat session" disabled={!authToken || isLoading}>
               <Files className="mr-1 h-4 w-4" /> New Chat
             </Button>
-            <Button variant="outline" size="sm" onClick={handleShowSessions} title="View previous chat sessions (Not Implemented)" disabled={!authToken || isLoading}>
-              <History className="mr-1 h-4 w-4" /> Sessions
-            </Button>
+            <Dialog open={isSessionsDialogOpen} onOpenChange={setIsSessionsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" onClick={handleShowSessions} title="View previous chat sessions" disabled={!authToken || isLoading}>
+                  <History className="mr-1 h-4 w-4" /> Sessions
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[525px] glass-panel">
+                <DialogHeader>
+                  <DialogTitle>Previous Chat Sessions</DialogTitle>
+                  <DialogDescription>Select a session to load its history.</DialogDescription>
+                </DialogHeader>
+                <div className="max-h-[60vh] overflow-y-auto pr-2">
+                  {isLoadingThreads ? (
+                    <div className="flex justify-center items-center p-4">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <span className="ml-2">Loading sessions...</span>
+                    </div>
+                  ) : availableThreads.length > 0 ? (
+                    <ul className="space-y-2">
+                      {availableThreads.map((thread) => (
+                        <li key={thread.thread_id}>
+                          <Button
+                            variant="ghost"
+                            className="w-full justify-start text-left h-auto py-2 px-3"
+                            onClick={() => loadChatHistory(thread.thread_id)}
+                          >
+                            <div className="flex flex-col">
+                              <span className="font-medium">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
+                              <span className="text-xs text-muted-foreground">
+                                Last updated: {new Date(thread.last_updated).toLocaleString()}
+                              </span>
+                            </div>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-4">No previous sessions found.</p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline">Close</Button>
+                  </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </CardHeader>
@@ -311,7 +405,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
       </CardContent>
       <CardFooter className="p-4 border-t border-border/50 flex-col space-y-2">
         <p className="text-xs text-muted-foreground w-full text-center">{chatStatusText}</p>
-        <div className="flex w-full items-center space-x-2">
+        <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-2">
           <Button variant="outline" size="icon" disabled={isLoading || !isMediaRecorderSupported || !authToken} title={!authToken ? "Login to use voice" : (isMediaRecorderSupported ? "Voice Input (Not Implemented)" : "Voice input not supported")}>
             <Mic className="h-4 w-4" /> <span className="sr-only">Voice Input</span>
           </Button>
@@ -322,19 +416,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, username, a
             onChange={(e) => setInputValue(e.target.value)}
             className="flex-1"
             disabled={isLoading || !authToken}
-            onKeyPress={(e) => { if (e.key === 'Enter' && !isLoading && authToken) handleSendMessage(); }}
           />
           <Button variant="outline" size="icon" disabled={!isLoading} title="Pause AI Response (Not Implemented)">
             <Pause className="h-4 w-4" /> <span className="sr-only">Pause</span>
           </Button>
-          <Button variant="outline" size="icon" disabled={!isLoading} onClick={handleStopStream} title="Stop AI Response">
+          <Button variant="outline" size="icon" type="button" disabled={!isLoading} onClick={handleStopStream} title="Stop AI Response">
             <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>
           </Button>
-          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !authToken} onClick={handleSendMessage} className="btn-glow-primary-hover">
+          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !authToken} className="btn-glow-primary-hover">
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
             <span className="sr-only">Send</span>
           </Button>
-        </div>
+        </form>
       </CardFooter>
     </Card>
   );

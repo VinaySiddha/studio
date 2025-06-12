@@ -12,16 +12,15 @@ import {
   generateTopics, 
   generateMindMap, 
   generatePodcastScript,
-  listDocumentsAction, // For fetching list of documents from Flask
-  handleDocumentUploadAction // For uploading documents to Flask
+  listDocumentsAction, 
+  handleDocumentUploadAction 
 } from '@/app/actions';
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
 
 export interface DocumentFile {
-  name: string; // This will now be just the filename
-  // content: string; // Content will reside on the Flask backend
-  type?: string; // Optional, if Flask provides it or if needed for UI
+  name: string; 
+  type?: string; 
 }
 
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
@@ -36,7 +35,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState<string>("Select a document to upload.");
   
-  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string, raw?: any } | null>(null);
+  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string; raw?: any; action?: UtilityAction } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoadingUtility, setIsLoadingUtility] = useState<Record<UtilityAction, boolean>>({
     faq: false,
@@ -48,7 +47,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   const { toast } = useToast();
 
-  // Fetch document list from Flask when component mounts or user changes
   useEffect(() => {
     const fetchDocuments = async () => {
       if (user?.token) {
@@ -99,14 +97,15 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setUploadStatusText(`Successfully uploaded ${result.filename || file.name}.`);
       toast({ title: "Document Uploaded", description: `${result.filename || file.name} processed by server. KB: ${result.vector_count >=0 ? result.vector_count : 'N/A'}` });
       
-      // Refresh document list
       const listResult = await listDocumentsAction(user.token);
       if (listResult.uploaded_files) {
-        setUploadedDocs(listResult.uploaded_files.map(name => ({ name })));
+        const newDocs = listResult.uploaded_files.map(name => ({ name }));
+        setUploadedDocs(newDocs);
+        // Automatically select the newly uploaded document if it's the only one or matches
+        if (newDocs.length === 1 || newDocs.find(d => d.name === (result.filename || file.name))) {
+            setSelectedDocName(result.filename || file.name);
+        }
       }
-      // Optionally, select the newly uploaded document
-      // setSelectedDocName(result.filename || file.name);
-
     } catch (error: any) {
       console.error("File upload to Flask error:", error);
       setUploadStatusText(`Error uploading ${file.name}: ${error.message}`);
@@ -120,9 +119,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     setSelectedDocName(documentName);
     if (documentName) {
       setAnalysisStatusText(`Selected: ${documentName}. Choose a utility.`);
-      toast({ title: "Document Selected", description: `${documentName} is now active.` });
+      toast({ title: "Document Selected", description: `${documentName} is now active for utilities and chat.` });
     } else {
       setAnalysisStatusText("No document selected.");
+      toast({ title: "Document Context Cleared", description: "Chat will now be in general mode." });
     }
   };
 
@@ -143,25 +143,26 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
     try {
       let resultData: any;
-      const inputArgs = { documentName: selectedDocName }; // Flask expects documentName/filename
+      const inputArgs = { documentName: selectedDocName }; 
 
       switch (action) {
         case 'faq':
-          resultData = await generateFaq(inputArgs); // Calls action that calls Flask
-          setUtilityResult({ title: `FAQ for ${selectedDocName}`, content: resultData.faqList || "No FAQ content returned.", raw: resultData });
+          resultData = await generateFaq(inputArgs); 
+          setUtilityResult({ title: `FAQ for ${selectedDocName}`, content: resultData.content || resultData.faqList || "No FAQ content returned.", raw: resultData, action });
           break;
         case 'topics':
           resultData = await generateTopics(inputArgs);
-          setUtilityResult({ title: `Key Topics for ${selectedDocName}`, content: (resultData.topics || []).join('\n- '), raw: resultData });
+          // Assuming Flask returns 'content' as a string of topics, or resultData.topics as array
+          const topicsContent = Array.isArray(resultData.topics) ? resultData.topics.join('\n- ') : (resultData.content || "No topics returned.");
+          setUtilityResult({ title: `Key Topics for ${selectedDocName}`, content: topicsContent, raw: resultData, action });
           break;
         case 'mindmap':
           resultData = await generateMindMap(inputArgs);
-          setUtilityResult({ title: `Mind Map (Text) for ${selectedDocName}`, content: resultData.mindMap || "No mind map content returned.", raw: resultData });
+          setUtilityResult({ title: `Mind Map (Mermaid Code) for ${selectedDocName}`, content: resultData.content || resultData.mindMap || "No mind map content returned.", raw: resultData, action });
           break;
         case 'podcast':
           resultData = await generatePodcastScript(inputArgs);
-           // Flask response might be { script: "...", audio_url: "..." }
-          setUtilityResult({ title: `Podcast Script for ${selectedDocName}`, content: resultData.podcastScript || "No script returned.", raw: resultData });
+          setUtilityResult({ title: `Podcast Script for ${selectedDocName}`, content: resultData.script || "No script returned.", raw: resultData, action });
           break;
       }
       
@@ -173,6 +174,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       const errorMsg = error.message || "An unexpected error occurred.";
       setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
+      setUtilityResult({ title: `Error - ${action}`, content: `Failed to generate ${action}: ${errorMsg}`, raw: { error: errorMsg }, action});
+      setIsModalOpen(true);
     } finally {
       setIsLoadingUtility(prev => ({ ...prev, [action]: false }));
     }
@@ -182,7 +185,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   return (
     <>
       <div className="flex flex-col lg:flex-row gap-8">
-        {/* Left Column */}
         <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8">
           <DocumentUploadSection 
             onDocumentUpload={handleDocumentUpload} 
@@ -191,7 +193,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           />
           <DocumentUtilitiesSection
             documents={uploadedDocs}
-            selectedDocumentName={selectedDocName || undefined} // Pass undefined if null
+            selectedDocumentName={selectedDocName || undefined} 
             onSelectDocument={handleSelectDocument}
             onUtilityAction={handleUtilityAction}
             isLoading={isLoadingUtility}
@@ -199,13 +201,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             isDocumentSelected={!!selectedDocName}
           />
         </div>
-        {/* Right Column */}
         <div className="w-full lg:w-[65%] xl:w-[70%]">
           <ChatTutorSection 
-            // documentContent is now managed by Flask. Chat needs selectedDocName if context is per-doc.
             documentName={selectedDocName} 
             username={user.username}
-            authToken={user.token} // Pass token for chat API calls if needed
+            authToken={user.token} 
           />
         </div>
       </div>
@@ -224,13 +224,13 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                     <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{utilityResult.raw.thinking}</pre>
                   </details>
                 )}
-                {utilityResult.raw?.latex_source && action === 'mindmap' && (
+                {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && (
                     <details className="mt-2">
-                        <summary className="text-xs cursor-pointer text-muted-foreground">Show LaTeX Source (Mindmap)</summary>
+                        <summary className="text-xs cursor-pointer text-muted-foreground">Show Processed Source (Mindmap)</summary>
                         <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{utilityResult.raw.latex_source}</pre>
                     </details>
                 )}
-                {utilityResult.raw?.audio_url && action === 'podcast' && (
+                {utilityResult.raw?.audio_url && utilityResult.action === 'podcast' && (
                     <div className="mt-4">
                         <h4 className="text-sm font-medium text-foreground">Podcast Audio</h4>
                         <audio controls src={utilityResult.raw.audio_url} className="w-full mt-1">
