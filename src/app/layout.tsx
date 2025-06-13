@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
-import { Inter } from 'next/font/google';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: 'Firebase Studio Chatbot',
-  description: 'A chatbot interface with Chat and Document modes.',
+  title: 'Genkit Chatbot',
+  description: 'A simple chatbot interface using Genkit and Gemini.',
 };
 
 export default function RootLayout({
@@ -17,16 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-<<<<<<< HEAD
-      <body className={`${inter.className} antialiased`}>
-=======
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
-      </head>
-      <body className="font-body antialiased">
->>>>>>> parent of ac40090 (#mimd map connection)
+      <body className={`${inter.variable} font-sans antialiased`}>
         {children}
         <Toaster />
       </body>

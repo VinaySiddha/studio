@@ -2,21 +2,18 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ai } from '@/ai/genkit';
-import { contextualChatPrompt, ContextualChatInputSchema } from '@/ai/flows/contextual-chat';
-import type { Message } from '@/components/message-item'; // Assuming Message type definition
+import { geminiChatPrompt, GeminiChatInputSchema } from '@/ai/flows/contextual-chat'; // Updated import
+import type { Message } from '@/components/message-item';
 
 export const dynamic = 'force-dynamic';
 
 // Schema for the request body to this API route
 const ApiRouteInputSchema = z.object({
   query: z.string(),
-  documentText: z.string().optional().nullable(), // Text from document mode
   history: z.array(z.object({
     role: z.enum(['user', 'model']),
     content: z.string(),
   })).optional().nullable(),
-  // The API key is NOT directly consumed here from client.
-  // Genkit's googleAI() plugin uses the server-side GOOGLE_API_KEY environment variable.
 });
 
 export async function POST(request: Request) {
@@ -31,23 +28,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid input', details: validation.error.format() }, { status: 400 });
     }
 
-    const { query, documentText, history } = validation.data;
-    console.log(`[API /chat] Processing query: "${query.substring(0, 50)}...", HasDoc: ${!!documentText}, HistoryLen: ${history?.length || 0}`);
+    const { query, history } = validation.data;
+    console.log(`[API /chat] Processing query: "${query.substring(0, 50)}...", HistoryLen: ${history?.length || 0}`);
 
-    const promptInput: z.infer<typeof ContextualChatInputSchema> = {
+    const promptInput: z.infer<typeof GeminiChatInputSchema> = {
       query,
-      documentText: documentText || undefined, // Pass undefined if null/empty
       history: history || undefined,
     };
     
-    // Use Genkit to generate a streaming response with Gemini
     const { stream, response: genkitResponsePromise } = ai.generateStream({
-      prompt: contextualChatPrompt,
+      prompt: geminiChatPrompt, // Using the simplified chat prompt
       input: promptInput,
-      history: history as Message[] || [], // Pass history to Genkit
-      config: {
-        // You can add model-specific config here if needed, e.g., temperature
-      }
+      history: history as Message[] || [], 
+      config: {}
     });
 
     console.log('[API /chat] Gemini stream initiated via Genkit.');
@@ -63,18 +56,14 @@ export async function POST(request: Request) {
             }
           }
           
-          // Wait for the full Genkit response to resolve (contains potential structured output or errors)
           const finalGenkitResponse = await genkitResponsePromise;
-          const finalOutput = finalGenkitResponse.output(); // This would be structured if prompt had output schema
+          const finalOutput = finalGenkitResponse.output(); 
 
           console.log('[API /chat] Stream ended. Final Genkit Output:', finalOutput);
 
-          // Send a final message indicating completion, can include structured data if available
           const finalMessage = {
             type: 'final',
             answer: typeof finalOutput === 'string' ? finalOutput : (finalOutput?.answer || ""), 
-            // references: finalOutput?.references || [], // If your prompt/flow structures references
-            // debugInfo: finalOutput?.debugInfo,
           };
           controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(finalMessage)}\n\n`));
 
