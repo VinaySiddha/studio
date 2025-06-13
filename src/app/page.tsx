@@ -1,121 +1,75 @@
-
+// src/app/page.tsx
 'use client';
 
-import { useState, useEffect, type FC } from 'react';
-import AppHeader from '@/components/app-header';
-import AppContent from '@/components/app-content';
-import LandingPage from '@/components/landing-page';
-import LoginForm from '@/components/login-form';
-import SignupForm from '@/components/signup-form';
-import { useToast } from "@/hooks/use-toast";
-import { loginUserAction, signupUserAction } from '@/app/actions'; 
+import type { FC } from 'react';
+import { useState, useEffect } from 'react';
+import ProfilePopup from '@/components/profile-popup';
+import ChatInterface from '@/components/chat-interface';
+import { Button } from '@/components/ui/button'; // For potential future use
+import { Separator } from '@/components/ui/separator'; // For potential future use
+import { Info } from 'lucide-react';
 
-export interface User {
-  username: string;
-  token: string;
-  firstname?: string;
-  lastname?: string;
-  email?: string;
-  gender?: string;
-  mobile?: string;
-  organization?: string;
-}
-
-const Page: FC = () => {
-  const [view, setView] = useState<'landing' | 'login' | 'signup' | 'app'>('landing');
-  const [user, setUser] = useState<User | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true); 
-
-  const { toast } = useToast();
+const HomePage: FC = () => {
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('aiTutorAuthToken');
-    const storedUsername = localStorage.getItem('aiTutorUsername');
-    const storedUserDetails = localStorage.getItem('aiTutorUserDetails');
-    let parsedUserDetails: Partial<User> = {};
-    if (storedUserDetails) {
-        try {
-            parsedUserDetails = JSON.parse(storedUserDetails);
-        } catch (e) {
-            console.error("Failed to parse stored user details", e);
-        }
+    // This effect runs only on the client-side
+    setIsClient(true);
+    const storedKey = localStorage.getItem('geminiUserApiKey');
+    if (storedKey) {
+      setApiKey(storedKey);
     }
-
-    if (storedToken && storedUsername) {
-      setUser({ username: storedUsername, token: storedToken, ...parsedUserDetails });
-      setView('app');
-    }
-    setIsLoadingAuth(false);
   }, []);
 
-  const handleLogin = async (formData: FormData) => {
-    setAuthError(null);
-    setIsLoadingAuth(true);
-    const result = await loginUserAction(formData);
-    if (result.user) {
-      const { token, ...userDetailsToStore } = result.user;
-      setUser(result.user);
-      localStorage.setItem('aiTutorAuthToken', token);
-      localStorage.setItem('aiTutorUsername', result.user.username);
-      localStorage.setItem('aiTutorUserDetails', JSON.stringify(userDetailsToStore));
-      setView('app');
-      toast({ title: "Login Successful", description: `Welcome back, ${result.user.username}!` });
-    } else if (result.error) {
-      setAuthError(result.error);
-      toast({ variant: "destructive", title: "Login Failed", description: result.error });
-    }
-    setIsLoadingAuth(false);
+  const handleApiKeyUpdate = (newKey: string | null) => {
+    setApiKey(newKey);
   };
 
-  const handleSignup = async (formData: FormData) => {
-    setAuthError(null);
-    setIsLoadingAuth(true);
-    const result = await signupUserAction(formData);
-    if (result.user) {
-      const { token, ...userDetailsToStore } = result.user;
-      setUser(result.user);
-      localStorage.setItem('aiTutorAuthToken', token);
-      localStorage.setItem('aiTutorUsername', result.user.username);
-      localStorage.setItem('aiTutorUserDetails', JSON.stringify(userDetailsToStore));
-      setView('app');
-      toast({ title: "Signup Successful", description: `Welcome, ${result.user.username}! You are now logged in.` });
-    } else if (result.error) {
-      setAuthError(result.error);
-      toast({ variant: "destructive", title: "Signup Failed", description: result.error });
-    }
-    setIsLoadingAuth(false);
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    localStorage.removeItem('aiTutorAuthToken');
-    localStorage.removeItem('aiTutorUsername');
-    localStorage.removeItem('aiTutorUserDetails');
-    localStorage.removeItem('aiTutorThreadId'); 
-    setView('landing');
-    toast({ title: "Logged Out", description: "You have been successfully logged out." });
-  };
-
-  if (isLoadingAuth && view !== 'app') { 
+  if (!isClient) {
+    // Render nothing or a loading indicator on the server or during first client render
     return (
-      <div className="flex flex-col min-h-screen bg-background text-foreground font-body items-center justify-center">
-        <div className="animate-pulse text-xl">Loading application...</div>
+        <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
+            <div className="animate-pulse text-xl">Loading Chat Interface...</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-foreground font-body overflow-hidden">
-      <AppHeader user={user} onLogout={handleLogout} />
-      <main className="flex flex-col flex-grow container mx-auto px-4 py-8 overflow-hidden">
-        {view === 'landing' && <LandingPage onShowLogin={() => setView('login')} onShowSignup={() => setView('signup')} />}
-        {view === 'login' && <LoginForm onSubmit={handleLogin} onShowSignup={() => setView('signup')} error={authError} isLoading={isLoadingAuth && view === 'login'} />}
-        {view === 'signup' && <SignupForm onSubmit={handleSignup} onShowLogin={() => setView('login')} error={authError} isLoading={isLoadingAuth && view === 'signup'} />}
-        {view === 'app' && user && <AppContent user={user} />}
-      </main>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background via-slate-900 to-zinc-900 text-foreground p-4 font-sans">
+      <header className="absolute top-4 right-4 z-10">
+        <ProfilePopup onApiKeyUpdate={handleApiKeyUpdate} initialApiKey={apiKey} />
+      </header>
+
+      <div className="flex flex-col items-center mb-8 text-center">
+        <h1 className="text-4xl font-bold text-primary font-headline mb-2 tracking-tight">
+          AI Powered Chatbot
+        </h1>
+        <p className="text-lg text-muted-foreground max-w-md">
+          Switch between general chat with Gemini and contextual chat about your documents.
+        </p>
+      </div>
+      
+      {!apiKey && (
+        <div className="w-[400px] mb-4 p-4 rounded-lg bg-yellow-900/40 border border-yellow-700 text-yellow-200 text-sm flex items-center gap-3">
+          <Info size={24} className="shrink-0 text-yellow-400" />
+          <span>Please set your Gemini API Key using the profile icon (top-right) to enable chat functionality.</span>
+        </div>
+      )}
+
+      <ChatInterface initialApiKey={apiKey} />
+      
+      <footer className="mt-12 text-center text-xs text-muted-foreground/70 w-full max-w-xl">
+        <p>
+          Ensure your <code className="bg-muted/50 text-foreground px-1 py-0.5 rounded mx-0.5">GOOGLE_API_KEY</code> environment variable is set on the server for Genkit functionality.
+          The API key entered via the profile icon is stored locally in your browser for this session's UI feedback.
+        </p>
+        <p className="mt-1">
+          Chatbot Prototype v1.0.0
+        </p>
+      </footer>
     </div>
   );
 };
 
-export default Page;
+export default HomePage;

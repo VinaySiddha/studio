@@ -17,8 +17,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        body: ['Space Grotesk', 'sans-serif'],
-        headline: ['Space Grotesk', 'sans-serif'],
+        sans: ['Inter', 'sans-serif'], // Using Inter as primary sans-serif
+        body: ['Inter', 'sans-serif'],
+        headline: ['Inter', 'sans-serif'], // Or a more distinct headline font if desired
         code: ['monospace'],
       },
       colors: {
@@ -46,6 +47,14 @@ export default {
         accent: {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
+        },
+        'mode-chat-accent': { // For direct use in Tailwind classes if needed
+            DEFAULT: 'hsl(var(--mode-chat-accent))',
+            foreground: 'hsl(var(--mode-chat-accent-foreground))',
+        },
+        'mode-document-accent': { // For direct use in Tailwind classes if needed
+            DEFAULT: 'hsl(var(--mode-document-accent))',
+            foreground: 'hsl(var(--mode-document-accent-foreground))',
         },
         popover: {
           DEFAULT: 'hsl(var(--popover))',
@@ -93,6 +102,8 @@ export default {
       boxShadow: {
         'glow-primary': '0 0 15px 5px hsl(var(--primary)/0.7)',
         'glow-accent': '0 0 15px 5px hsl(var(--accent)/0.7)',
+        'glow-mode-chat-accent': '0 0 15px 5px hsl(var(--mode-chat-accent)/0.7)',
+        'glow-mode-document-accent': '0 0 15px 5px hsl(var(--mode-document-accent)/0.7)',
       }
     },
   },

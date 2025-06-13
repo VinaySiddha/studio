@@ -1,10 +1,13 @@
-import type {Metadata} from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
-import { Toaster } from "@/components/ui/toaster"
+import { Toaster } from "@/components/ui/toaster";
+import { Inter } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Local AI Engineering Tutor',
-  description: 'Upload documents and interact with an AI tutor.',
+  title: 'Firebase Studio Chatbot',
+  description: 'A chatbot interface with Chat and Document modes.',
 };
 
 export default function RootLayout({
@@ -14,14 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
-        <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" async></script>
-      </head>
-      <body className="font-body antialiased">
-        <script dangerouslySetInnerHTML={{ __html: `mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });` }} />
+      <body className={`${inter.className} antialiased`}>
         {children}
         <Toaster />
       </body>
