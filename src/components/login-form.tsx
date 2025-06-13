@@ -56,22 +56,22 @@ const LoginForm: FC<LoginFormProps> = ({ onLoginSuccess, onSwitchToSignup }) => 
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-ai-engineer-dark-bg p-4">
-      <Card className="w-full max-w-md glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border">
+    <div className="flex items-center justify-center min-h-screen bg-background p-4">
+      <Card className="w-full max-w-md bg-card border text-card-foreground">
         <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-headline text-ai-engineer-accent-blue">Login</CardTitle>
-          <CardDescription className="text-ai-engineer-text-secondary">
+          <CardTitle className="text-3xl font-headline text-primary">Login</CardTitle>
+          <CardDescription className="text-muted-foreground">
             Access your AI Engineering Tutor account.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="identifier" className="text-ai-engineer-text-primary">Username or Email</Label>
+              <Label htmlFor="identifier">Username or Email</Label>
               <Input
                 id="identifier"
                 autoComplete="username"
-                className="bg-ai-engineer-input-bg text-ai-engineer-text-primary placeholder:text-ai-engineer-text-muted"
+                className="bg-input text-foreground placeholder:text-muted-foreground"
                 placeholder="your.username or email@example.com"
                 {...form.register("identifier")}
                 disabled={isLoading}
@@ -81,12 +81,12 @@ const LoginForm: FC<LoginFormProps> = ({ onLoginSuccess, onSwitchToSignup }) => 
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-ai-engineer-text-primary">Password</Label>
+              <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
                 type="password"
                 autoComplete="current-password"
-                className="bg-ai-engineer-input-bg text-ai-engineer-text-primary"
+                className="bg-input text-foreground"
                 {...form.register("password")}
                 disabled={isLoading}
               />
@@ -94,16 +94,16 @@ const LoginForm: FC<LoginFormProps> = ({ onLoginSuccess, onSwitchToSignup }) => 
                 <p className="text-xs text-destructive">{form.formState.errors.password.message}</p>
               )}
             </div>
-            <Button type="submit" className="w-full bg-ai-engineer-accent-blue hover:bg-ai-engineer-accent-blue/90 text-primary-foreground btn-glow-primary-hover text-base" disabled={isLoading}>
+            <Button type="submit" className="w-full text-base" variant="default" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Login
             </Button>
           </form>
         </CardContent>
         <CardFooter className="flex flex-col items-center">
-          <p className="text-sm text-ai-engineer-text-muted">
+          <p className="text-sm text-muted-foreground">
             Don't have an account?{' '}
-            <Button variant="link" className="p-0 h-auto text-ai-engineer-accent-teal hover:text-ai-engineer-accent-teal/80" onClick={onSwitchToSignup} disabled={isLoading}>
+            <Button variant="link" className="p-0 h-auto text-primary hover:text-primary/80" onClick={onSwitchToSignup} disabled={isLoading}>
               Sign up here
             </Button>
           </p>
