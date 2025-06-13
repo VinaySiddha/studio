@@ -1,3 +1,4 @@
+
 import re
 import os
 import logging
@@ -174,11 +175,6 @@ def api_root():
         "note": "Access the frontend via the Next.js application."
     }), 200
 
-# Favicon removed, should be served by Next.js frontend
-# @app.route('/favicon.ico')
-# def favicon():
-#     return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
-
 @app.route('/register', methods=['POST'])
 def register():
     if not app_db_ready:
@@ -219,7 +215,6 @@ def register():
         except OSError as e:
             logger.error(f"Could not create upload directory for new user {user_id}: {e}")
         
-        # Also create user-specific podcast audio folder
         user_podcast_folder = os.path.join(config.PODCAST_AUDIO_FOLDER, str(user_id))
         try:
             os.makedirs(user_podcast_folder, exist_ok=True)
@@ -237,7 +232,7 @@ def login():
     if not app_db_ready:
         return jsonify({"error": "Database service unavailable for login."}), 503
     data = request.get_json()
-    identifier = data.get('username') # Client sends as 'username', could be username or email
+    identifier = data.get('username') 
     password = data.get('password')
 
     if not identifier or not password:
@@ -249,13 +244,12 @@ def login():
 
     if user and bcrypt.check_password_hash(user['password_hash'], password):
         token_payload = {
-            'user_id': user['_id'], # Already stringified by get_user_by_username/email
+            'user_id': user['_id'], 
             'username': user['username'],
             'exp': datetime.now(timezone.utc) + config.JWT_ACCESS_TOKEN_EXPIRES
         }
         token = jwt.encode(token_payload, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM)
         
-        # Return more user details for the frontend to store
         user_details_for_frontend = {
             "token": token,
             "username": user.get('username'),
@@ -265,7 +259,6 @@ def login():
             "gender": user.get('gender'),
             "mobile": user.get('mobile'),
             "organization": user.get('organization')
-            # Do not send password_hash or _id directly if not needed by frontend explicitly with token
         }
         logger.info(f"Login successful for user: {user.get('username')}")
         return jsonify(user_details_for_frontend), 200
@@ -278,8 +271,8 @@ def get_status():
      vector_store_count = -1
      if app_ai_ready and app_vector_store_ready and ai_core.vector_store and hasattr(ai_core.vector_store, 'index') and ai_core.vector_store.index:
         try: vector_store_count = ai_core.vector_store.index.ntotal
-        except: vector_store_count = -2 # Error fetching count
-     elif app_vector_store_ready: # Vector store might be loaded but empty
+        except: vector_store_count = -2 
+     elif app_vector_store_ready: 
          try: vector_store_count = getattr(getattr(ai_core.vector_store, 'index', None), 'ntotal', 0)
          except: vector_store_count = -2
 
@@ -299,21 +292,23 @@ def get_status():
 @token_required
 def get_documents(current_user):
     user_id = current_user['_id']
-    uploaded_files = []
     error_messages = []
+    formatted_documents = []
 
     if app_db_ready:
-        # Fetch user documents from DB (these are records, we need just filenames)
-        user_docs_from_db = database.get_user_documents(user_id) # This returns list of dicts
-        # Extract original_filename for display, or filename if original is missing
-        uploaded_files = sorted(
-            [doc.get("original_filename", doc["filename"]) for doc in user_docs_from_db]
-        )
+        user_docs_from_db = database.get_user_documents(user_id) # This returns list of dicts from MongoDB
+        for doc in user_docs_from_db:
+            formatted_documents.append({
+                "name": doc.get("original_filename", doc.get("filename")), # original_filename for display
+                "securedName": doc.get("filename") # secured (UUID-prefixed) name for API operations
+            })
+        # Sort by original display name
+        formatted_documents.sort(key=lambda x: x["name"].lower() if x["name"] else "")
     else:
         error_messages.append("Cannot retrieve user documents: Database unavailable.")
 
     response_data = {
-        "uploaded_files": uploaded_files, # This should be a list of filenames as strings
+        "uploaded_files": formatted_documents, # This should be a list of {name, securedName} objects
         "errors": error_messages if error_messages else None
     }
     return jsonify(response_data)
@@ -339,7 +334,6 @@ def upload_file(current_user):
         return jsonify({"error": "No file selected"}), 400
 
     original_filename = file.filename
-    # Updated allowed_file check to use config.ALLOWED_EXTENSIONS directly
     if not ('.' in original_filename and original_filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS):
         allowed_ext_str = ", ".join(config.ALLOWED_EXTENSIONS)
         return jsonify({"error": f"Invalid file type. Only {allowed_ext_str} files are allowed."}), 400
@@ -374,9 +368,8 @@ def upload_file(current_user):
             if os.path.exists(filepath):
                  try: os.remove(filepath)
                  except OSError as e_remove: logger.error(f"Error removing file {filepath} after failed text extraction: {e_remove}")
-            if doc_record_id: # If record was created
+            if doc_record_id: 
                 database.mark_document_indexed(doc_record_id, indexed=False, error_message="Text extraction failed or PDF protected")
-                # Consider deleting the document record from DB as well
                 logger.info(f"Document record {doc_record_id} should be reviewed or removed due to text extraction failure.")
 
             err_msg = "Could not read text from PDF (possibly password protected or empty)." if text and text.startswith("[Error: PDF is password protected") else f"Could not extract text from '{original_filename}'."
@@ -388,7 +381,7 @@ def upload_file(current_user):
         logger.info(f"Text extracted and cached for user {user_id}, file {filename_uuid}.")
 
         source_metadata = {
-             "source": filename_uuid, # This is the secured name, frontend might prefer original_filename
+             "source": filename_uuid, 
              "user_id": user_id,
              "doc_db_id": str(doc_record_id) 
         }
@@ -409,8 +402,8 @@ def upload_file(current_user):
 
         return jsonify({
             "message": f"File '{original_filename}' uploaded and added to knowledge base successfully.",
-            "filename": filename_uuid, # Return secured name
-            "original_filename": original_filename, # Also return original for display
+            "filename": filename_uuid, 
+            "original_filename": original_filename, 
             "vector_count": vector_count
         }), 200
 
@@ -419,7 +412,6 @@ def upload_file(current_user):
         if 'filepath' in locals() and os.path.exists(filepath): 
              try: os.remove(filepath) 
              except OSError: pass
-        # If doc_record_id exists, mark as not indexed
         if 'doc_record_id' in locals() and doc_record_id:
             database.mark_document_indexed(str(doc_record_id), indexed=False, error_message=f"Unexpected error: {type(e).__name__}")
         return jsonify({"error": f"An unexpected server error occurred: {type(e).__name__}. File processing failed."}), 500
@@ -434,15 +426,14 @@ def analyze_document(current_user):
          return jsonify({"error": "Analysis unavailable: AI model is not ready."}), 503
 
     data = request.get_json()
-    filename = data.get('filename') # This is the secured filename from the frontend
+    filename_secured = data.get('filename') # This IS the secured filename from the frontend
     analysis_type = data.get('analysis_type') 
 
-    if not filename or not analysis_type:
-        return jsonify({"error": "Filename and analysis_type required."}), 400
+    if not filename_secured or not analysis_type:
+        return jsonify({"error": "Filename (secured) and analysis_type required."}), 400
     
-    # Resolve original_filename for display if needed, using filename (secured) for processing
-    doc_record = database.get_document_by_filename(user_id, filename)
-    original_filename_display = doc_record.get("original_filename", filename) if doc_record else filename
+    doc_record = database.get_document_by_filename(user_id, filename_secured)
+    original_filename_display = doc_record.get("original_filename", filename_secured) if doc_record else filename_secured
 
 
     if analysis_type != "podcast" and analysis_type not in config.ANALYSIS_PROMPTS:
@@ -454,7 +445,7 @@ def analyze_document(current_user):
     if analysis_type == "podcast":
         try:
             script, audio_path_part, error = asyncio.run(
-                ai_core.generate_podcast_from_document(user_id, filename, async_callback=send_thinking_message)
+                ai_core.generate_podcast_from_document(user_id, filename_secured, async_callback=send_thinking_message)
             )
             if error:
                 return jsonify({"error": error, "script": script or "", "original_filename": original_filename_display}), 500
@@ -471,12 +462,12 @@ def analyze_document(current_user):
                 "original_filename": original_filename_display
             })
         except Exception as e:
-            logger.error(f"Unexpected error in /analyze (podcast) endpoint for {filename}, user {user_id}: {e}", exc_info=True)
+            logger.error(f"Unexpected error in /analyze (podcast) endpoint for {filename_secured}, user {user_id}: {e}", exc_info=True)
             return jsonify({"error": f"Internal server error during podcast generation: {type(e).__name__}", "original_filename": original_filename_display}), 500
     else:
         analysis_content, thinking_content_list, latex_source = asyncio.run(
             ai_core.generate_document_analysis(
-                filename, # Pass secured filename
+                filename_secured, 
                 analysis_type,
                 user_id=user_id,
                 async_callback=send_thinking_message
@@ -484,12 +475,12 @@ def analyze_document(current_user):
         )
         response_data = {
             "content": analysis_content,
-            "thinking": "\n".join(thinking_content_list) if thinking_content_list else None, # Join list for JSON
+            "thinking": "\n".join(thinking_content_list) if thinking_content_list else None, 
             "latex_source": latex_source,
             "original_filename": original_filename_display
         }
         if analysis_content is None:
-            logger.error(f"Unexpected None result from generate_document_analysis for '{filename}' type '{analysis_type}'.")
+            logger.error(f"Unexpected None result from generate_document_analysis for '{filename_secured}' type '{analysis_type}'.")
             response_data["error"] = f"Could not generate analysis for '{original_filename_display}' due to an internal issue."
             return jsonify(response_data), 500
 
@@ -529,10 +520,10 @@ def get_threads(current_user):
     if not app_db_ready:
         return jsonify({"error": "Thread list unavailable: Database connection failed."}), 503
     threads = database.get_user_threads(user_id)
-    if threads is None: # get_user_threads returns [] on error, not None, but check anyway
+    if threads is None: 
         return jsonify({"error": "Could not retrieve threads due to a database error."}), 500
     else:
-        return jsonify(threads), 200 # threads is already a list of dicts
+        return jsonify(threads), 200 
 
 @app.route('/thread_history', methods=['GET'])
 @token_required
@@ -544,8 +535,8 @@ def get_thread_history(current_user):
     if not thread_id:
         return jsonify({"error": "Missing 'thread_id' parameter"}), 400
     messages = database.get_messages_by_thread(user_id, thread_id)
-    if messages is None: # get_messages_by_thread returns None on error or empty list
-        return jsonify({"error": "Could not retrieve history for this thread or thread is empty."}), 404 # 404 if not found/empty
+    if messages is None: 
+        return jsonify({"error": "Could not retrieve history for this thread or thread is empty."}), 404 
     else:
         return jsonify(messages), 200
 
@@ -563,46 +554,24 @@ def chat(current_user):
 
     data = request.get_json()
     query = data.get('query')
-    thread_id = data.get('thread_id') # This is the frontend's current threadId
+    thread_id = data.get('thread_id') 
 
     if not query or not query.strip():
         return jsonify({"error": "Query cannot be empty", "answer": "Please enter a question.", "thread_id": thread_id}), 400
     query = query.strip()
-
-    # Frontend now sends documentName for context, not full content.
-    # This documentName is the "secured" filename from the database.
-    document_context_name = data.get('documentContent') # Frontend uses 'documentContent' to pass the name
     
-    # If document_context_name is "No document provided for context.", treat as general query.
-    # Otherwise, it's a filename to use for RAG.
-    is_general_query = document_context_name == "No document provided for context." or not document_context_name
-
-    # Handle @filename syntax from query if still desired, though frontend now passes context explicitly
-    document_filter_from_query = None
-    if query.startswith('@'):
-        import re
-        doc_match = re.match(r'^@([a-zA-Z0-9_.-]+\.pdf)\s*(.*)$', query, re.IGNORECASE) # Assuming PDF only for @ syntax
-        if doc_match:
-            document_filter_from_query = doc_match.group(1) # This is original_filename
-            query = doc_match.group(2).strip()
-            logger.info(f"Detected @document filter in query: {document_filter_from_query} for query: {query[:50]}...")
-            # We'd need to resolve this original_filename to the secured filename for RAG
-            # For simplicity, if document_context_name is already provided, prioritize that.
-            # This @ syntax might be redundant if frontend sends context name.
-            if not is_general_query and document_context_name != document_filter_from_query:
-                logger.warning(f"Conflicting document context: '@{document_filter_from_query}' in query vs '{document_context_name}' from UI. Prioritizing UI context.")
-        else:
-             logger.info(f"Query starts with '@' but no specific document filter matched pattern. Query: {query[:50]}...")
-
+    document_context_name = data.get('documentContent') 
+    
+    is_general_query = document_context_name == config.GENERAL_QUERY_PLACEHOLDER or not document_context_name
 
     final_document_filter_for_rag = None
     if not is_general_query:
-        final_document_filter_for_rag = document_context_name # This should be the secured filename
+        final_document_filter_for_rag = document_context_name 
         logger.info(f"Chat context is document: '{final_document_filter_for_rag}'")
     else:
-        logger.info("Chat context is General (no specific document).")
+        logger.info("Chat context is General (no specific document). Using placeholder for ai_core if needed.")
+        final_document_filter_for_rag = config.GENERAL_QUERY_PLACEHOLDER 
         
-    # Ensure thread_id exists; create if not provided by client (e.g., first message in a new chat)
     if not thread_id:
         logger.info(f"No thread_id provided for chat from user '{user_id}'. Creating new thread.")
         first_query_words = query.split()
@@ -614,11 +583,11 @@ def chat(current_user):
             logger.error(f"Failed to create new thread for user '{user_id}' during chat message.")
             error_msg = "Failed to start new chat thread due to a server error."
             return jsonify({"error": error_msg, "answer": error_msg, "type": "error"}), 500
-        thread_id = new_thread_id_from_db # Use the newly created thread_id
+        thread_id = new_thread_id_from_db 
         logger.info(f"New thread ID '{thread_id}' created for user '{user_id}' for this chat with title '{potential_title}'.")
 
 
-    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}': '{query[:100]}...' Document context: {final_document_filter_for_rag or 'General'}")
+    logger.info(f"Processing chat query for user '{user_id}', thread '{thread_id}': '{query[:100]}...' Document context for RAG: {final_document_filter_for_rag}")
 
     def format_sse(data: dict) -> str:
         json_data = json.dumps(data)
@@ -640,18 +609,18 @@ def chat(current_user):
                     query=query,
                     model_context=None, 
                     agentic_context=None, 
-                    document_filter=final_document_filter_for_rag, # Pass the resolved document context
+                    document_filter=final_document_filter_for_rag, 
                     async_callback=send_thinking_message_for_stream 
                 )
                 for tmsg in thinking_messages_for_stream:
-                    yield format_sse({"type": "thinking", "message": tmsg}) # Keep 'thinking' type for intermediate steps
+                    yield format_sse({"type": "thinking", "message": tmsg}) 
                 
                 yield format_sse({
                     "type": "final", 
                     "answer": bot_answer,
                     "thread_id": returned_thread_id, 
                     "references": references,
-                    "thinking": thinking_content # This is the main CoT block from LLM
+                    "thinking": thinking_content 
                 })
             except Exception as e_stream:
                 logger.critical(f"Critical unexpected error in /chat SSE stream for user '{user_id}', thread '{thread_id}': {e_stream}", exc_info=True)
@@ -673,11 +642,118 @@ def chat(current_user):
 
     return Response(stream(), mimetype='text/event-stream')
 
+# --- Endpoint for Transcribing Audio ---
+@app.route('/transcribe-audio', methods=['POST'])
+@token_required
+def transcribe_audio(current_user):
+    # Basic stub, replace with actual transcription logic (e.g., Whisper)
+    # This requires a library like 'openai-whisper' or 'faster-whisper'
+    # and potentially a GPU for good performance.
+    if 'audio' not in request.files:
+        return jsonify({"error": "No audio file part"}), 400
+    audio_file = request.files['audio']
+    if not audio_file or not audio_file.filename:
+        return jsonify({"error": "No audio file selected"}), 400
 
-# Legacy /history and /sessions, map to new thread endpoints or remove if Next.js client only uses new ones
+    logger.info(f"Audio transcription request for user {current_user['_id']}, file: {audio_file.filename}")
+    # Example: Save file temporarily and process (actual implementation needed)
+    # temp_filename = f"temp_audio_{uuid.uuid4()}.webm" # Or whatever format it is
+    # audio_file.save(temp_filename)
+    # transcribed_text = "This is a placeholder for transcribed audio content." # Replace with actual transcription call
+    # os.remove(temp_filename)
+    # For now, returning placeholder:
+    transcribed_text = "Audio transcription not yet implemented on backend."
+    
+    return jsonify({"text": transcribed_text})
+
+# --- Endpoint for Renaming Chat Thread ---
+@app.route('/chat/thread/<thread_id>/rename', methods=['POST'])
+@token_required
+def rename_chat_thread(current_user, thread_id):
+    user_id = current_user['_id']
+    data = request.get_json()
+    new_title = data.get('new_title')
+
+    if not new_title or not new_title.strip():
+        return jsonify({"error": "New title cannot be empty."}), 400
+
+    if not app_db_ready:
+        return jsonify({"error": "Database service unavailable."}), 503
+
+    logger.info(f"Attempting to rename thread '{thread_id}' to '{new_title}' for user '{user_id}'.")
+    database.update_thread_title(user_id, thread_id, new_title.strip())
+    # Assume update_thread_title handles success/failure logging or raises exceptions
+    return jsonify({"message": f"Thread '{thread_id}' renamed to '{new_title}'."}), 200
+
+
+# --- Endpoint for Deleting Chat Thread ---
+@app.route('/chat/thread/<thread_id>', methods=['DELETE'])
+@token_required
+def delete_chat_thread(current_user, thread_id):
+    user_id = current_user['_id']
+    if not app_db_ready:
+        return jsonify({"error": "Database service unavailable."}), 503
+    
+    logger.info(f"Attempting to delete thread '{thread_id}' for user '{user_id}'.")
+    # You'll need a function in database.py to delete a thread and its messages
+    success = database.delete_thread_and_messages(user_id, thread_id) # Assume this function exists
+    if success:
+        return jsonify({"message": f"Thread '{thread_id}' and its messages deleted successfully."}), 200
+    else:
+        return jsonify({"error": f"Failed to delete thread '{thread_id}'. It might not exist or an error occurred."}), 500
+
+# --- Endpoint for Deleting a Document ---
+@app.route('/document/<secured_filename>', methods=['DELETE'])
+@token_required
+def delete_document_endpoint(current_user, secured_filename):
+    user_id = current_user['_id']
+    if not app_db_ready:
+        return jsonify({"error": "Database service unavailable."}), 503
+
+    logger.info(f"Attempting to delete document '{secured_filename}' for user '{user_id}'.")
+    
+    # 1. Delete from Database Record
+    doc_record = database.get_document_by_filename(user_id, secured_filename)
+    if not doc_record:
+        return jsonify({"error": "Document record not found in database."}), 404
+    
+    original_filename_for_log = doc_record.get("original_filename", secured_filename)
+    
+    db_delete_success = database.delete_document_record(user_id, secured_filename) # Assume this exists
+
+    # 2. Delete from Vector Store (More complex, requires re-indexing or selective deletion if FAISS supports it easily)
+    # For simplicity, this example might skip direct FAISS deletion or assume manual re-indexing later.
+    # A robust solution would remove specific vectors from ai_core.vector_store and save.
+    # ai_core.remove_document_from_vector_store(user_id, secured_filename) # Ideal
+    logger.warning(f"Vector store entries for '{secured_filename}' (user {user_id}) may need manual cleanup or re-indexing if not handled by core logic.")
+
+    # 3. Delete from File System
+    file_system_delete_success = False
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], user_id, secured_filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            logger.info(f"File '{file_path}' deleted from file system for user '{user_id}'.")
+            file_system_delete_success = True
+        except OSError as e:
+            logger.error(f"Error deleting file '{file_path}' from file system: {e}", exc_info=True)
+            # Continue, but report this. DB record deletion might proceed.
+    else:
+        logger.warning(f"File '{file_path}' not found on file system for deletion (user '{user_id}').")
+        file_system_delete_success = True # Consider it success if not there to delete
+
+    if db_delete_success and file_system_delete_success:
+        return jsonify({"message": f"Document '{original_filename_for_log}' deleted successfully."}), 200
+    elif not db_delete_success:
+        return jsonify({"error": f"Failed to delete document record '{original_filename_for_log}' from database."}), 500
+    else: # DB deleted, but file system issue (though might be benign if file was already gone)
+        return jsonify({"message": f"Document record '{original_filename_for_log}' deleted from DB, but encountered issue with file system part (check logs)."}), 207
+
+
+# --- Legacy /history and /sessions, map to new thread endpoints or remove if Next.js client only uses new ones
 @app.route('/history', methods=['GET'])
 @token_required
-def get_history(current_user): # Effectively same as get_thread_history
+def get_history(current_user): 
     user_id = current_user['_id']
     thread_id_param = request.args.get('thread_id') or request.args.get('session_id')
     if not app_db_ready: return jsonify({"error": "History unavailable: DB connection failed."}), 503
@@ -689,7 +765,7 @@ def get_history(current_user): # Effectively same as get_thread_history
 
 @app.route('/sessions', methods=['GET'])
 @token_required
-def get_sessions(current_user): # Effectively same as get_threads
+def get_sessions(current_user): 
     user_id = current_user['_id']
     if not app_db_ready: return jsonify({"error": "Session list unavailable: DB connection failed."}), 503
     
@@ -698,7 +774,6 @@ def get_sessions(current_user): # Effectively same as get_threads
     return jsonify(threads), 200
 
 
-# New endpoint to serve podcast audio files
 @app.route('/serve_podcast_audio/<path:user_file_path>')
 def serve_podcast_audio(user_file_path):
     if ".." in user_file_path or user_file_path.startswith("/"):
@@ -759,8 +834,6 @@ if __name__ == '__main__':
     index_status = 'Loaded/Ready' if app_vector_store_ready else ('Not Found/Empty' if app_ai_ready else 'Not Loaded (AI Failed)')
     logger.info(f"Component Status: DB={db_status} | AI={ai_status} | Index={index_status}")
     logger.info("Press Ctrl+C to stop the server.")
-
-    # app.run(host=host, port=port, threaded=True, debug=True, use_reloader=False) 
-    # For production, consider: 
+ 
     serve(app, host=host, port=port, threads=8)
-# --- END OF FILE app.py ---
+

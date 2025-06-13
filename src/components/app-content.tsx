@@ -22,8 +22,8 @@ import { Button } from '@/components/ui/button';
 import { MessageCircle, BookOpen, ServerCrash } from 'lucide-react';
 
 export interface DocumentFile {
-  name: string; 
-  securedName: string; 
+  name: string; // Original filename for display
+  securedName: string; // Secured (e.g., UUID prefixed) filename for API calls
 }
 
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
@@ -65,7 +65,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           setAnalysisStatusText(`Error: ${result.error}`);
           setUploadedDocs([]);
         } else {
-          const docs: DocumentFile[] = (result.uploaded_files || []).map(f => ({ name: f.name, securedName: f.securedName }));
+          const docs: DocumentFile[] = (result.uploaded_files || []).map(f => ({ 
+            name: f.name, // Should be original_filename
+            securedName: f.securedName // Should be the UUID-prefixed filename
+          }));
           setUploadedDocs(docs);
 
           if (docs.length === 0) {
@@ -74,18 +77,17 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             setSelectedDocOriginalName(null);
             if (chatMode === 'document') setChatMode('general');
           } else {
-            setAnalysisStatusText("Select a document and utility type.");
-            if (selectedDocSecuredName && !docs.find(d => d.securedName === selectedDocSecuredName)) {
-                setSelectedDocSecuredName(null); 
-                setSelectedDocOriginalName(null);
-                if (chatMode === 'document') setChatMode('general');
-            } else if (selectedDocSecuredName) {
-              // Keep current selection if still valid
-              const currentSelectedDoc = docs.find(d => d.securedName === selectedDocSecuredName);
-              if (currentSelectedDoc) {
-                setSelectedDocOriginalName(currentSelectedDoc.name); // Ensure original name is also up-to-date
-                setAnalysisStatusText(`Selected: ${currentSelectedDoc.name}. Ready for utilities or document chat.`);
-              }
+            // If a document was previously selected, try to keep it selected if it still exists
+            const currentSelectedExists = selectedDocSecuredName ? docs.some(d => d.securedName === selectedDocSecuredName) : false;
+            if (currentSelectedExists && selectedDocOriginalName) {
+                 setAnalysisStatusText(`Selected: ${selectedDocOriginalName}. Ready for utilities or document chat.`);
+            } else {
+                 // If previous selection is gone or was never there, clear it or select first.
+                 // For now, just set a general status. User needs to re-select for document-specific actions.
+                 setSelectedDocSecuredName(null); 
+                 setSelectedDocOriginalName(null);
+                 if (chatMode === 'document') setChatMode('general');
+                 setAnalysisStatusText("Select a document for utilities or document-specific chat.");
             }
           }
         }
@@ -95,7 +97,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.token, chatMode]); // Added chatMode to dependencies if it influences selection logic
+  }, [user.token, toast]); // chatMode removed as direct dependency, it's handled by selection logic
 
   useEffect(() => {
     fetchDocuments();
@@ -123,9 +125,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setUploadStatusText(`Successfully uploaded ${result.original_filename}.`);
       toast({ title: "Document Uploaded", description: `${result.original_filename} processed. KB: ${result.vector_count ?? 'N/A'}` });
       
-      await fetchDocuments(); 
+      await fetchDocuments(); // Refreshes the document list
 
-      setSelectedDocSecuredName(result.filename); 
+      // Auto-select the newly uploaded document and switch to document chat mode
+      setSelectedDocSecuredName(result.filename); // filename from Flask is the securedName
       setSelectedDocOriginalName(result.original_filename);
       setChatMode('document'); 
       setAnalysisStatusText(`Selected: ${result.original_filename}. Ready for utilities or document chat.`);
@@ -139,15 +142,16 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
   
-  const handleSelectDocument = (securedName: string) => {
-    const selected = uploadedDocs.find(d => d.securedName === securedName);
+  const handleSelectDocument = (securedNameToSelect: string) => {
+    const selected = uploadedDocs.find(d => d.securedName === securedNameToSelect);
     if (selected) {
       setSelectedDocSecuredName(selected.securedName);
       setSelectedDocOriginalName(selected.name);
-      setChatMode('document'); 
+      setChatMode('document'); // Automatically switch to document chat mode on selection
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
     } else {
+      // This case should ideally not happen if dropdown is populated correctly
       setSelectedDocSecuredName(null);
       setSelectedDocOriginalName(null);
       setChatMode('general');
@@ -164,7 +168,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       } else {
         toast({ variant: "default", title: "Select Document for Document Chat", description: "Please select a document from the 'Document Hub' first to switch to document-specific chat mode." });
       }
-    } else { 
+    } else { // Currently in 'document' mode, switch to 'general'
       setChatMode('general');
       toast({ title: "Chat Mode Switched", description: "Now in general chat mode." });
     }
@@ -185,9 +189,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           if (selectedDocSecuredName === docToDelete.securedName) {
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
-            setChatMode('general');
+            setChatMode('general'); // Switch to general mode if active doc deleted
             setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
           } else if (updatedDocs.length === 0) {
+            setChatMode('general');
             setAnalysisStatusText("All documents deleted. Upload a new document.");
           }
         } else {
@@ -238,22 +243,25 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
       let displayContent = "";
       let isProcessingError = false;
+
       if (resultData.error) {
-        // Check if the error indicates a document processing issue from the backend
-        if (resultData.error.includes("Failed to retrieve or process text content")) {
-          displayContent = `Could not perform '${action}' on "${selectedDocOriginalName}". The server failed to process the document's content. Please try with a different document or check the file.`;
+        const errorMsg = resultData.error;
+        if (errorMsg.includes("Failed to retrieve or process text content") || errorMsg.includes("doc_text_for_llm is empty")) {
+          displayContent = `Could not perform '${action}' on "${selectedDocOriginalName}". The server failed to process this document's content. It might be corrupted, password-protected, or an unsupported format. Please try with a different document.`;
           isProcessingError = true;
         } else {
-          displayContent = `An error occurred while generating ${action}: ${resultData.error}`;
+          displayContent = `An error occurred while generating ${action}: ${errorMsg}`;
         }
+         toast({ variant: "destructive", title: `Error Generating ${action}`, description: isProcessingError ? `Document processing failed for ${selectedDocOriginalName}.` : errorMsg });
       } else {
           if (action === 'topics' && Array.isArray(resultData.topics)) {
-            displayContent = resultData.topics.length > 0 ? "- " + resultData.topics.join('\n- ') : "No topics extracted.";
+            displayContent = resultData.topics.length > 0 ? resultData.topics.map(t => `- ${t}`).join('\n') : "No topics extracted.";
           } else if (action === 'podcast') {
             displayContent = resultData.script || resultData.podcastScript || "No script returned.";
-          } else {
+          } else { // For FAQ, Mindmap (content is the Mermaid code)
             displayContent = resultData.content || resultData.faqList || resultData.mindMap || "No content returned.";
           }
+          toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
       }
 
       setUtilityResult({ 
@@ -261,20 +269,14 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         content: displayContent, 
         raw: resultData, 
         action,
-        error: resultData.error, // Store original error if any
+        error: resultData.error, 
         isProcessingError 
       });
       setIsModalOpen(true);
-      if (resultData.error) {
-        setAnalysisStatusText(`Error generating ${action}.`);
-        toast({ variant: "destructive", title: `Error Generating ${action}`, description: isProcessingError ? "Document processing failed on server." : resultData.error });
-      } else {
-        setAnalysisStatusText(`${action} for ${selectedDocOriginalName} received.`);
-        toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
-      }
+      setAnalysisStatusText(resultData.error ? `Error generating ${action}.` : `${action} for ${selectedDocOriginalName} received.`);
 
     } catch (error: any) {
-      console.error(`Error generating ${action} via Flask:`, error);
+      console.error(`Error generating ${action} from server action:`, error);
       const errorMsg = error.message || "An unexpected error occurred.";
       setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
@@ -291,25 +293,30 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
 
-  const documentNameForChat = chatMode === 'document' ? selectedDocOriginalName : null;
+  // This is the name passed to ChatTutorSection for context
+  const documentNameForChat = chatMode === 'document' ? selectedDocSecuredName : null;
+  // This is the original name used for display in the chat mode button
+  const displayDocumentNameForChatButton = chatMode === 'document' ? selectedDocOriginalName : null;
+
 
   return (
     <div className="flex flex-col flex-grow h-full overflow-hidden">
+      {/* Chat Mode Toggle Button - Moved to top center */}
       <div className="mb-6 flex justify-center items-center">
         <Button 
             onClick={handleToggleChatMode} 
             variant="outline" 
             className="btn-glow-primary-hover shadow-md"
-            disabled={chatMode === 'document' ? false : (!selectedDocSecuredName && uploadedDocs.length > 0)}
+            disabled={chatMode === 'document' ? false : (!selectedDocSecuredName && uploadedDocs.length > 0)} // Disable switch to doc mode if no doc selected but docs exist
             title={
               chatMode === 'general' 
-                ? (selectedDocSecuredName ? "Switch to Document Chat" : "Select a document to enable document-specific chat") 
+                ? (selectedDocSecuredName ? "Switch to Document Chat" : "Select a document from 'Document Hub' to enable document-specific chat") 
                 : "Switch to General Chat"
             }
           >
             {chatMode === 'general' ? <MessageCircle className="mr-2 h-5 w-5" /> : <BookOpen className="mr-2 h-5 w-5 text-primary" />}
             {chatMode === 'general' ? 'General Chat Mode' : 'Document Chat Mode'}
-            {chatMode === 'document' && selectedDocOriginalName ? <span className="ml-2 text-xs text-muted-foreground truncate max-w-[150px]">({selectedDocOriginalName})</span> : ''}
+            {displayDocumentNameForChatButton ? <span className="ml-2 text-xs text-muted-foreground truncate max-w-[150px]">({displayDocumentNameForChatButton})</span> : ''}
           </Button>
           {chatMode === 'general' && !selectedDocSecuredName && uploadedDocs.length > 0 && (
             <p className="ml-3 text-xs text-muted-foreground">Select a document in "Document Hub" to enable document-specific chat.</p>
@@ -334,9 +341,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             onDeleteDocument={(doc) => setDocToDelete(doc)}
           />
         </div>
-        <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
+        <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col"> {/* Ensure this column can also grow */}
           <ChatTutorSection 
-            documentName={documentNameForChat} 
+            documentName={documentNameForChat} // Pass securedName for backend, display name handled internally by chat if needed
             user={user}
             onClearDocumentContext={() => {
               setSelectedDocSecuredName(null);
@@ -353,14 +360,17 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         <AlertDialog open={isModalOpen} onOpenChange={setIsModalOpen}>
           <AlertDialogContent className="max-w-2xl glass-panel">
             <AlertDialogHeader>
-              <AlertDialogTitle className="font-headline text-primary">
+              <AlertDialogTitle className="font-headline text-primary flex items-center">
                 {utilityResult.isProcessingError && <ServerCrash className="inline-block mr-2 h-5 w-5 text-destructive" />}
                 {utilityResult.title}
               </AlertDialogTitle>
               <AlertDialogDescription 
                 className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
               >
-                <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
+                 {utilityResult.error && utilityResult.isProcessingError 
+                    ? <p className="text-destructive">{utilityResult.content}</p> 
+                    : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
+                  }
               </AlertDialogDescription>
             </AlertDialogHeader>
             {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
@@ -418,6 +428,3 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 };
 
 export default AppContent;
-
-
-    

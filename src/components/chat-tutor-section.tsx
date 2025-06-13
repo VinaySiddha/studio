@@ -22,7 +22,7 @@ import {
 import type { User } from '@/app/page';
 
 interface ChatTutorSectionProps {
-  documentName: string | null;
+  documentName: string | null; // This will be the securedName if a document is selected for context
   user: User;
   onClearDocumentContext: () => void;
 }
@@ -30,7 +30,7 @@ interface ChatTutorSectionProps {
 interface Thread {
   thread_id: string;
   title: string;
-  last_updated: string; // Assuming ISO string
+  last_updated: string; 
 }
 
 const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onClearDocumentContext }) => {
@@ -83,13 +83,14 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages([{
         id: 'initial-bot-message',
         sender: 'ai',
-        text: documentName ? `Ask me anything about ${documentName}!` : "Upload or select a document to chat about, or ask a general question.",
+        text: documentName ? `Ask me anything about the selected document!` : "Upload or select a document to chat about, or ask a general question.",
         timestamp: new Date(),
       }]);
     }
-    setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
+    // Chat status text is now primarily managed by AppContent via documentName prop
+    setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentName, user.token]);
+  }, [documentName, user.token]); // documentName now correctly influences initial message
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -105,7 +106,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       abortControllerRef.current.abort();
       setIsLoading(false);
       setThinkingMessage(null);
-      setChatStatusText("Response stopped.");
+      setChatStatusText("Response stopped by user.");
       setMessages((prev) => prev.map(m => m.isLoading ? {...m, text: m.text === '...' ? "[Response stopped by user]" : m.text + "\n[Response stopped by user]", isLoading: false} : m));
     }
   };
@@ -132,7 +133,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setThinkingMessage("AI is preparing your response...");
 
     abortControllerRef.current = new AbortController();
-    const currentAiMessageId = Date.now().toString() + '-ai';
+    const currentAiMessageId = Date.now().toString() + '-ai-stream'; // Ensure unique ID for streaming message
     let currentAiMessageText = '';
 
     setMessages((prev) => [...prev, {
@@ -146,7 +147,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     try {
       const requestBody = {
         query: query,
-        documentContent: documentName || "No document provided for context.",
+        documentContent: documentName || "No document provided for context.", // documentName here is the securedName
         threadId: currentThreadId || undefined, 
         authToken: user.token,
       };
@@ -174,69 +175,64 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         for (const sseMessage of sseMessages) {
           if (sseMessage.startsWith('data: ')) {
             const rawData = sseMessage.substring(6);
-            if (!rawData.trim()) {
-              console.warn("[ChatTutor] Received empty SSE data message from stream.");
-              continue;
-            }
+            if (!rawData.trim()) continue; 
+            
+            let data;
             try {
-              const data = JSON.parse(rawData);
-              if (typeof data !== 'object' || data === null) {
-                console.warn("[ChatTutor] Received non-object SSE data from stream:", data);
-                setMessages(prev => prev.map(m =>
-                  m.id === currentAiMessageId ? {
-                    ...m,
-                    text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: malformed data chunk]`,
-                    isError: true,
-                    isLoading: false
-                  } : m
-                ));
-                continue;
-              }
-
-              if (data.type === 'thinking' && typeof data.message === 'string') {
-                setThinkingMessage(data.message);
-              } else if (data.type === 'chunk' && typeof data.content === 'string') {
-                currentAiMessageText += data.content;
-                setMessages((prev) => prev.map(msg =>
-                  msg.id === currentAiMessageId ? { ...msg, text: currentAiMessageText, isLoading: true } : msg
-                ));
-              } else if (data.type === 'final') {
-                currentAiMessageText = (data.answer && typeof data.answer === 'string' ? data.answer : currentAiMessageText) || "";
-                const finalThreadId = (data.thread_id && typeof data.thread_id === 'string' ? data.thread_id : null) || currentThreadId;
-
-                if (finalThreadId && finalThreadId !== currentThreadId) {
-                  setCurrentThreadId(finalThreadId);
-                  localStorage.setItem('aiTutorThreadId', finalThreadId);
-                }
-                setMessages((prev) => prev.map(msg =>
-                  msg.id === currentAiMessageId ? {
-                    ...msg,
-                    text: currentAiMessageText || "[AI response finished]",
-                    references: (data.references && Array.isArray(data.references)) ? data.references as Reference[] : [],
-                    thinking: (data.thinking && typeof data.thinking === 'string') ? data.thinking : undefined,
-                    isLoading: false
-                  } : msg
-                ));
-                setIsLoading(false);
-                setThinkingMessage(null);
-                setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
-              } else if (data.type === 'error') {
-                const errorMessageContent = (data.error && typeof data.error === 'string') ? data.error : ((data.message && typeof data.message === 'string') ? data.message : 'Stream error from server.');
-                throw new Error(errorMessageContent);
-              } else {
-                console.warn("[ChatTutor] Received SSE data with unknown type or structure from stream:", data);
-              }
-
+              data = JSON.parse(rawData);
             } catch (parseError: any) {
-              console.error('[ChatTutor] Error processing SSE message:', parseError.message, "Raw SSE part:", sseMessage);
+              console.error('[ChatTutor] Error parsing SSE JSON:', parseError.message, "Raw SSE part:", rawData);
               setMessages(prev => prev.map(m =>
                 m.id === currentAiMessageId ? {
                   ...m,
-                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: ${parseError.message}]`,
-                  isError: true,
-                  isLoading: false
-                } : m
+                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: malformed JSON chunk]`,
+                  isError: true, isLoading: false
+                } : m));
+              continue; 
+            }
+            if (typeof data !== 'object' || data === null) {
+              console.warn("[ChatTutor] Received non-object or null SSE data from stream:", data);
+              setMessages(prev => prev.map(m =>
+                m.id === currentAiMessageId ? {
+                  ...m,
+                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: unexpected data format]`,
+                  isError: true, isLoading: false
+                } : m));
+              continue;
+            }
+
+            if (data.type === 'thinking' && typeof data.message === 'string') {
+              setThinkingMessage(data.message);
+            } else if (data.type === 'chunk' && typeof data.content === 'string') {
+              currentAiMessageText += data.content;
+              setMessages((prev) => prev.map(msg =>
+                msg.id === currentAiMessageId ? { ...msg, text: currentAiMessageText, isLoading: true } : msg
               ));
+            } else if (data.type === 'final') {
+              currentAiMessageText = (data.answer && typeof data.answer === 'string' ? data.answer : currentAiMessageText) || "";
+              const finalThreadId = (data.thread_id && typeof data.thread_id === 'string' ? data.thread_id : null) || currentThreadId;
+
+              if (finalThreadId && finalThreadId !== currentThreadId) {
+                setCurrentThreadId(finalThreadId);
+                localStorage.setItem('aiTutorThreadId', finalThreadId);
+              }
+              setMessages((prev) => prev.map(msg =>
+                msg.id === currentAiMessageId ? {
+                  ...msg,
+                  text: currentAiMessageText || "[AI response complete]",
+                  references: (data.references && Array.isArray(data.references)) ? data.references as Reference[] : [],
+                  thinking: (data.thinking && typeof data.thinking === 'string') ? data.thinking : undefined,
+                  isLoading: false
+                } : msg
+              ));
+              setIsLoading(false);
+              setThinkingMessage(null);
+              setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
+            } else if (data.type === 'error') {
+              const errorMessageContent = (data.error && typeof data.error === 'string') ? data.error : ((data.message && typeof data.message === 'string') ? data.message : 'Stream error from server.');
+              throw new Error(errorMessageContent);
+            } else {
+              console.warn("[ChatTutor] Received SSE data with unknown type or structure from stream:", data);
             }
           }
         }
@@ -250,7 +246,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         setMessages((prev) => prev.map(msg =>
           msg.id === currentAiMessageId ? {
             ...msg,
-            text: currentAiMessageText || `Sorry, I encountered an error: ${errorMessage}`,
+            text: (msg.text === "..." ? "" : m.text) || `Sorry, I encountered an error: ${errorMessage}`,
             isError: true,
             isLoading: false
           } : msg
@@ -260,9 +256,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       abortControllerRef.current = null;
       setIsLoading(false);
       setThinkingMessage(null);
-      // Ensure isLoading is set to false if it was still true
       setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m));
-      setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
+      setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
     }
   };
 
@@ -289,7 +284,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
     setIsLoading(true);
     setChatStatusText("Starting new chat...");
-    onClearDocumentContext(); // This will set documentName to null via AppContent
+    onClearDocumentContext(); 
     try {
       const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString());
       if (result.error || !result.thread_id) {
@@ -350,8 +345,6 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages(fetchedMessages);
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
-      // Determine if this thread was document-specific (heuristic, backend should ideally tell us)
-      // For now, assume general if no document context is actively re-established.
       setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
       if (fetchedMessages.length === 0) {
           toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
@@ -431,45 +424,43 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // Standard type
+        const currentStream = mediaRecorderRef.current?.stream;
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         
-        // Ensure all tracks are stopped
-        if (mediaRecorderRef.current?.stream) {
-          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        // Ensure all tracks are stopped AFTER blob creation
+        if (currentStream) {
+          currentStream.getTracks().forEach(track => track.stop());
         }
-        mediaRecorderRef.current = null; // Clear the ref
+        mediaRecorderRef.current = null; 
 
         if (audioBlob.size === 0) {
-            toast({title: "No audio recorded.", variant: "default"});
-            setIsRecording(false);
-            setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
-            return;
-        }
+            toast({title: "No audio recorded.", variant: "default"}); // Use default variant
+        } else {
+            toast({title: "Transcribing audio..."});
+            setIsLoading(true); 
+            setChatStatusText("Transcribing audio...");
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'user_audio.webm');
 
-        toast({title: "Transcribing audio..."});
-        setIsLoading(true); // Use general loading state for transcription
-        setChatStatusText("Transcribing audio...");
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'user_audio.webm'); // Consistent filename
-
-        try {
-            if (!user.token) throw new Error("User token not found for transcription.");
-            const result = await transcribeAudioAction(user.token, formData);
-            if (result.text) {
-                setInputValue(prev => (prev ? prev + " " : "") + result.text);
-                toast({title: "Transcription complete."});
-            } else if (result.error) {
-                throw new Error(result.error);
-            } else {
-                toast({title: "Empty transcription received.", variant: "default"});
+            try {
+                if (!user.token) throw new Error("User token not found for transcription.");
+                const result = await transcribeAudioAction(user.token, formData);
+                if (result.text) {
+                    setInputValue(prev => (prev ? prev + " " : "") + result.text);
+                    toast({title: "Transcription complete."});
+                } else if (result.error) {
+                    throw new Error(result.error);
+                } else {
+                    toast({title: "Empty transcription received.", variant: "default"});
+                }
+            } catch (transcriptionError: any) {
+                toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
+            } finally {
+                setIsLoading(false);
             }
-        } catch (transcriptionError: any) {
-            toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
-        } finally {
-            setIsLoading(false);
-            setIsRecording(false); // Ensure recording state is reset
-            setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
         }
+        setIsRecording(false); 
+        setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
       };
       mediaRecorderRef.current.start();
       setIsRecording(true);
@@ -485,9 +476,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      // Stream tracks are stopped in onstop
+      // onstop handler will set isRecording to false and clean up stream.
     }
-    // Note: setIsRecording(false) is handled in onstop to ensure it's only set after processing
   };
 
   return (
@@ -587,7 +577,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             />
           ))}
           {thinkingMessage && isLoading && (
-             <div className="flex items-center justify-start my-4 ml-11">
+             <div className="flex items-center justify-start my-4 ml-11"> {/* Adjusted margin for bot-like alignment */}
                 <Loader2 className="h-5 w-5 text-primary animate-spin mr-2" />
                 <p className="text-sm text-muted-foreground p-3 bg-muted/70 rounded-lg shadow-md glass-panel !bg-card/50">{thinkingMessage}</p>
             </div>
@@ -602,7 +592,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             size="icon"
             type="button"
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading || !isMediaRecorderSupported || !user.token} // Disable if general isLoading is true too
+            disabled={isLoading || !isMediaRecorderSupported || !user.token}
             title={!user.token ? "Login to use voice" : (isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported")}
             className={isRecording ? "text-destructive border-destructive animate-pulse" : ""}
           >
@@ -610,11 +600,11 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           </Button>
           <Input
             type="text"
-            placeholder={documentName ? `Ask about ${documentName}...` : "Ask a general question..."}
+            placeholder={documentName ? `Ask about selected document...` : "Ask a general question..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             className="flex-1"
-            disabled={isLoading || !user.token || isRecording} // Disable if recording
+            disabled={isLoading || !user.token || isRecording} 
           />
           <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null || isRecording} onClick={handleStopStream} title="Stop AI Response">
             <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>

@@ -10,22 +10,31 @@ const FLASK_BACKEND_URL = process.env.NEXT_PUBLIC_FLASK_BACKEND_URL || 'http://l
 // Helper to make authenticated requests to Flask
 async function fetchFlaskAPI(endpoint: string, options: RequestInit = {}, authToken?: string | null) {
   const headers: HeadersInit = {
-    // 'Content-Type': 'application/json', // Let body type dictate this
     ...options.headers,
   };
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  if (!(options.body instanceof FormData) && options.body && typeof options.body === 'string') {
-    try {
-      JSON.parse(options.body); 
-      if(!headers['Content-Type']) headers['Content-Type'] = 'application/json';
-    } catch (e) {
-      // Not JSON, or Content-Type already set
+  if (!(options.body instanceof FormData)) {
+    if (options.body && typeof options.body === 'string') {
+        try {
+            JSON.parse(options.body); 
+            if(!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        } catch (e) {
+            // Not JSON, or Content-Type already set, do nothing special
+        }
+    } else if (options.body && typeof options.body === 'object') { // Ensure it's not FormData already
+        if(!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        // options.body will be stringified below if it's an object and not FormData
     }
-  } else if (options.body instanceof FormData) {
+  } else { // options.body IS FormData
     delete headers['Content-Type']; // Let browser set it with boundary for FormData
+  }
+  
+  // Stringify body if it's an object and not FormData and Content-Type is application/json
+  if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData) && headers['Content-Type'] === 'application/json') {
+    options.body = JSON.stringify(options.body);
   }
 
 
@@ -42,14 +51,13 @@ async function fetchFlaskAPI(endpoint: string, options: RequestInit = {}, authTo
     } else {
         const textResponse = await response.text();
         if (!response.ok) {
-            // Try to parse as JSON if error, otherwise use text
             try {
-                data = JSON.parse(textResponse);
+                data = JSON.parse(textResponse); // Try to parse error as JSON
             } catch (e) {
                 data = { error: textResponse || `Request failed with status ${response.status}` };
             }
-        } else {
-            return { successText: textResponse } as any; 
+        } else { 
+            return { successText: textResponse } as any; // Handle non-JSON success (e.g. plain text message)
         }
     }
 
@@ -60,7 +68,9 @@ async function fetchFlaskAPI(endpoint: string, options: RequestInit = {}, authTo
     return data;
   } catch (error: any) {
     console.error(`Flask API fetch error to ${endpoint}:`, error);
-    throw new Error(error.message || 'Network error or Flask API is down.');
+    // Ensure the error thrown has a message property
+    const errorMessage = error.message || 'Network error or Flask API is down.';
+    throw new Error(errorMessage);
   }
 }
 
@@ -155,19 +165,16 @@ export async function signupUserAction(formData: FormData): Promise<{ success?: 
 export async function listDocumentsAction(userToken: string): Promise<{ uploaded_files: {name: string, securedName: string}[], error?: string }> {
   try {
     const flaskResponse = await fetchFlaskAPI('/documents', { method: 'GET' }, userToken);
-    const formattedFiles = (flaskResponse.uploaded_files || []).map((file: any) => {
-      // Flask sends a list of original_filenames, but we need securedName (filename in Flask)
-      // This assumes Flask's Document record has 'original_filename' and 'filename' (secured)
-      // If Flask just sends a list of strings (original_filename), we cannot get securedName here easily.
-      // The Flask /documents endpoint needs to return richer objects.
-      // For now, assuming it returns objects with 'original_filename' and 'filename'
-      if (typeof file === 'object' && file.original_filename && file.filename) {
-        return { name: file.original_filename, securedName: file.filename };
-      }
-      // Fallback if Flask returns simple list of names (less ideal)
-      return { name: String(file), securedName: String(file) }; 
-    });
-    return { uploaded_files: formattedFiles };
+    // Assuming Flask now returns a list of objects like [{name: "original.pdf", securedName: "uuid_original.pdf"}, ...]
+    if (Array.isArray(flaskResponse.uploaded_files)) {
+      return { 
+        uploaded_files: flaskResponse.uploaded_files.map((file: any) => ({
+          name: file.name || file.original_filename || 'Unknown Filename', // Prefer 'name' if Flask sends it like that
+          securedName: file.securedName || file.filename || '' // Prefer 'securedName'
+        }))
+      };
+    }
+    return { uploaded_files: [] , error: "Invalid document list format from server."};
   } catch (error: any) {
     return { uploaded_files: [], error: error.message || "Failed to list documents." };
   }
@@ -181,7 +188,7 @@ export async function handleDocumentUploadAction(formData: FormData, userToken: 
     }, userToken);
     return { 
       message: flaskResponse.message, 
-      filename: flaskResponse.filename, 
+      filename: flaskResponse.filename, // This should be the secured name from Flask
       original_filename: flaskResponse.original_filename, 
       vector_count: flaskResponse.vector_count 
     };
@@ -195,14 +202,12 @@ export async function deleteDocumentAction(userToken: string, documentSecuredNam
     const flaskResponse = await fetchFlaskAPI(`/document/${documentSecuredName}`, {
       method: 'DELETE',
     }, userToken);
-    // Assuming Flask returns a success message or error in JSON
     if (flaskResponse.message) {
       return { success: true, message: flaskResponse.message };
-    } else if (flaskResponse.successText) { // If non-JSON success
+    } else if (flaskResponse.successText) { 
       return { success: true, message: flaskResponse.successText };
     }
-     // If no specific success message, construct one
-    return { success: true, message: "Document deleted successfully." };
+    return { success: true, message: "Document deleted successfully." }; // Fallback success
   } catch (error: any) {
     console.error(`Error deleting document ${documentSecuredName} via Flask:`, error);
     return { success: false, error: error.message || "Failed to delete document." };
@@ -210,7 +215,7 @@ export async function deleteDocumentAction(userToken: string, documentSecuredNam
 }
 
 export interface GenerateUtilityFlaskInput {
-  documentName: string; 
+  documentName: string; // This should be the SECURED document name
   userToken: string;
 }
 
@@ -219,10 +224,9 @@ export async function generateFaq(input: GenerateUtilityFlaskInput): Promise<{ f
     const flaskResponse = await fetchFlaskAPI('/analyze', {
       method: 'POST',
       body: JSON.stringify({
-        filename: input.documentName, 
+        filename: input.documentName, // This is the securedName
         analysis_type: 'faq'
       }),
-      headers: {'Content-Type': 'application/json'}
     }, input.userToken);
     return {
       content: flaskResponse.content || flaskResponse.faqList || "No FAQ content returned.",
@@ -240,19 +244,24 @@ export async function generateTopics(input: GenerateUtilityFlaskInput): Promise<
     const flaskResponse = await fetchFlaskAPI('/analyze', {
       method: 'POST',
       body: JSON.stringify({
-        filename: input.documentName,
+        filename: input.documentName, // This is the securedName
         analysis_type: 'topics'
       }),
-      headers: {'Content-Type': 'application/json'}
     }, input.userToken);
-    const topicsContent = Array.isArray(flaskResponse.content) ? flaskResponse.content : (typeof flaskResponse.content === 'string' ? flaskResponse.content.split('\n- ') : []);
+    // Ensure content is treated as a string for splitting if it's not already an array
+    const topicsContentString = Array.isArray(flaskResponse.content) 
+        ? flaskResponse.content.join('\n') 
+        : (typeof flaskResponse.content === 'string' ? flaskResponse.content : '');
+    const topicsArray = topicsContentString.split('\n').map(t => t.replace(/^- /,'').trim()).filter(Boolean);
+
     return {
-      content: flaskResponse.content,
-      topics: topicsContent,
+      content: topicsContentString, // Return the original content string as well
+      topics: topicsArray,
       thinking: flaskResponse.thinking,
       raw: flaskResponse
     };
-  } catch (error: any) {
+  } catch (error: any)
+{
     console.error("Error in generateTopics server action (Flask call):", error);
     return { error: error.message || "Failed to generate topics via Flask." };
   }
@@ -263,10 +272,9 @@ export async function generateMindMap(input: GenerateUtilityFlaskInput): Promise
     const flaskResponse = await fetchFlaskAPI('/analyze', {
       method: 'POST',
       body: JSON.stringify({
-        filename: input.documentName,
+        filename: input.documentName, // This is the securedName
         analysis_type: 'mindmap'
       }),
-      headers: {'Content-Type': 'application/json'}
     }, input.userToken);
     return {
       content: flaskResponse.content || flaskResponse.mindMap || "No mind map from Flask.",
@@ -285,10 +293,9 @@ export async function generatePodcastScript(input: GenerateUtilityFlaskInput): P
     const flaskResponse = await fetchFlaskAPI('/analyze', {
       method: 'POST',
       body: JSON.stringify({
-        filename: input.documentName,
+        filename: input.documentName, // This is the securedName
         analysis_type: 'podcast'
       }),
-      headers: {'Content-Type': 'application/json'}
     }, input.userToken);
     return {
       script: flaskResponse.script || "No podcast script from Flask.",
@@ -309,7 +316,6 @@ export async function createNewChatThreadAction(userToken: string, title: string
     const flaskResponse = await fetchFlaskAPI('/chat/thread', {
       method: 'POST',
       body: JSON.stringify({ title }),
-      headers: {'Content-Type': 'application/json'}
     }, userToken);
     return { thread_id: flaskResponse.thread_id, title: flaskResponse.title };
   } catch (error: any) {
@@ -340,7 +346,6 @@ export async function renameChatThreadAction(userToken: string, threadId: string
     const flaskResponse = await fetchFlaskAPI(`/chat/thread/${threadId}/rename`, {
       method: 'POST',
       body: JSON.stringify({ new_title: newTitle }),
-      headers: { 'Content-Type': 'application/json' },
     }, userToken);
     return { success: true, message: flaskResponse.message || "Thread renamed successfully." };
   } catch (error: any) {
@@ -364,9 +369,10 @@ export async function deleteChatThreadAction(userToken: string, threadId: string
 // --- Voice Transcription Action ---
 export async function transcribeAudioAction(userToken: string, audioFormData: FormData): Promise<{text?: string, error?: string}> {
   try {
+    // Note: fetchFlaskAPI will handle FormData correctly by not setting Content-Type itself
     const flaskResponse = await fetchFlaskAPI('/transcribe-audio', {
       method: 'POST',
-      body: audioFormData, // FormData will set its own Content-Type
+      body: audioFormData, 
     }, userToken);
     return { text: flaskResponse.text };
   } catch (error: any) {
