@@ -1,12 +1,10 @@
 
 'use client';
 
-import { useState, type FC, useEffect, useCallback } from 'react';
+import { useState, type FC, useEffect, useCallback, useRef } from 'react';
 import DocumentUploadSection from '@/components/document-upload-section';
 import DocumentUtilitiesSection from '@/components/document-utilities-section';
 import ChatTutorSection from '@/components/chat-tutor-section';
-import HelpTooltip from '@/components/help-tooltip';
-import ApiKeyManager from '@/components/api-key-manager'; // Import new component
 import { useToast } from "@/hooks/use-toast";
 import { 
   generateFaq, 
@@ -20,7 +18,7 @@ import {
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
 import { Button } from '@/components/ui/button';
-import { MessageCircle, BookOpen, ServerCrash } from 'lucide-react';
+import { MessageSquare, BookOpen, ServerCrash, Loader2 } from 'lucide-react';
 
 export interface DocumentFile {
   name: string; 
@@ -30,13 +28,16 @@ export interface DocumentFile {
 export type UtilityAction = 'faq' | 'topics' | 'mindmap' | 'podcast';
 export type ChatMode = 'general' | 'document';
 
+const GENERAL_QUERY_PLACEHOLDER = "No document provided for context.";
+
+
 interface CachedUtilityResult {
   title: string;
-  content: string;
-  raw?: any;
+  content: string; // Mermaid code for mindmap, script for podcast, formatted text for others
+  raw?: any; // Raw response from Flask for debugging or specific needs like audio_url
   action?: UtilityAction;
   error?: string;
-  isProcessingError?: boolean;
+  isProcessingError?: boolean; // True if Flask specifically failed to process the doc
 }
 
 interface UtilityCache {
@@ -55,20 +56,21 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [selectedDocOriginalName, setSelectedDocOriginalName] = useState<string | null>(null);
   
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadStatusText, setUploadStatusText] = useState<string>("Select a document to upload.");
+  const [uploadStatusText, setUploadStatusText] = useState<string>("Select a PDF, DOCX, PPTX, TXT, or code file.");
   
   const [utilityResult, setUtilityResult] = useState<CachedUtilityResult | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoadingUtility, setIsLoadingUtility] = useState<Record<UtilityAction, boolean>>({
-    faq: false,
-    topics: false,
-    mindmap: false,
-    podcast: false,
+    faq: false, topics: false, mindmap: false, podcast: false,
   });
   const [analysisStatusText, setAnalysisStatusText] = useState<string>("Select document & utility type.");
   const [chatMode, setChatMode] = useState<ChatMode>('general');
   const [docToDelete, setDocToDelete] = useState<DocumentFile | null>(null);
   const [utilityCache, setUtilityCache] = useState<UtilityCache>({});
+
+  const mindMapContainerRef = useRef<HTMLDivElement>(null);
+  const [isMindmapRendering, setIsMindmapRendering] = useState(false);
+
 
   const { toast } = useToast();
 
@@ -82,39 +84,22 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           setAnalysisStatusText(`Error: ${result.error}`);
           setUploadedDocs([]);
         } else {
-          const docs: DocumentFile[] = (result.uploaded_files || []).map(f => ({ 
-            name: f.name, // Expecting original_filename as 'name' from backend
-            securedName: f.securedName // Expecting secured (UUID) filename as 'securedName'
-          }));
+          const docs: DocumentFile[] = (result.uploaded_files || []);
           setUploadedDocs(docs);
 
           if (docs.length === 0) {
             setAnalysisStatusText("No documents uploaded. Upload a file to begin.");
-            setSelectedDocSecuredName(null);
-            setSelectedDocOriginalName(null);
+            setSelectedDocSecuredName(null); setSelectedDocOriginalName(null);
             if (chatMode === 'document') setChatMode('general');
           } else {
             const currentSelectedExists = selectedDocSecuredName ? docs.some(d => d.securedName === selectedDocSecuredName) : false;
             if (currentSelectedExists && selectedDocOriginalName) {
                  setAnalysisStatusText(`Selected: ${selectedDocOriginalName}. Ready for utilities or document chat.`);
             } else {
-<<<<<<< HEAD
-<<<<<<< HEAD
-                 if (selectedDocSecuredName && !currentSelectedExists) {
-                    setSelectedDocSecuredName(null); 
-                    setSelectedDocOriginalName(null);
+                 if (selectedDocSecuredName && !currentSelectedExists) { // If previously selected doc was deleted
+                    setSelectedDocSecuredName(null); setSelectedDocOriginalName(null);
                     if (chatMode === 'document') setChatMode('general'); 
                  }
-=======
-                 setSelectedDocSecuredName(null); 
-                 setSelectedDocOriginalName(null);
-                 if (chatMode === 'document') setChatMode('general');
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-                 setSelectedDocSecuredName(null); 
-                 setSelectedDocOriginalName(null);
-                 if (chatMode === 'document') setChatMode('general');
->>>>>>> parent of ac40090 (#mimd map connection)
                  setAnalysisStatusText("Select a document for utilities or document-specific chat.");
             }
           }
@@ -168,7 +153,16 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
   
-  const handleSelectDocument = (securedNameToSelect: string) => {
+  const handleSelectDocument = (securedNameToSelect: string | null) => {
+    if (securedNameToSelect === null || securedNameToSelect === "") { // Deselecting
+        setSelectedDocSecuredName(null);
+        setSelectedDocOriginalName(null);
+        setChatMode('general');
+        setAnalysisStatusText("Document deselected. Switched to general chat mode.");
+        toast({variant: "default", title: "Document Deselected", description: "Switched to general chat mode."});
+        return;
+    }
+
     const selected = uploadedDocs.find(d => d.securedName === securedNameToSelect);
     if (selected) {
       setSelectedDocSecuredName(selected.securedName);
@@ -177,25 +171,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
     } else {
+      // This case should ideally not happen if dropdown is populated correctly
       setSelectedDocSecuredName(null);
       setSelectedDocOriginalName(null);
-<<<<<<< HEAD
-<<<<<<< HEAD
-      if (securedNameToSelect === "" || securedNameToSelect === null || securedNameToSelect === "no-doc-placeholder") { 
-=======
-      if (securedNameToSelect === "" || securedNameToSelect === null) { // Handle explicit deselection or placeholder
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-      if (securedNameToSelect === "" || securedNameToSelect === null) { // Handle explicit deselection or placeholder
->>>>>>> parent of ac40090 (#mimd map connection)
-        setChatMode('general');
-        setAnalysisStatusText("Document deselected. Switched to general chat mode.");
-        toast({variant: "default", title: "Document Deselected", description: "Switched to general chat mode."})
-      } else {
-        setChatMode('general');
-        setAnalysisStatusText("Document not found. Switched to general chat mode.");
-        toast({variant: "warning", title: "Document Not Found", description: "Switched to general chat mode."})
-      }
+      setChatMode('general');
+      setAnalysisStatusText("Document not found. Switched to general chat mode.");
+      toast({variant: "warning", title: "Document Not Found", description: "Selected document is invalid. Switched to general chat mode."})
     }
   };
 
@@ -220,13 +201,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     toast({ title: `Deleting ${docNameForToast}...` });
     try {
         const result = await deleteDocumentAction(user.token, securedNameForDeletion);
-        if (result.success) {
+        if (result.success || result.message?.includes("successfully")) { // Flask might return 'message' on success
           toast({ title: "Document Deleted", description: `${docNameForToast} has been deleted.` });
           
           const updatedDocs = uploadedDocs.filter(d => d.securedName !== securedNameForDeletion);
           setUploadedDocs(updatedDocs);
 
-          // Remove from utility cache
           setUtilityCache(prevCache => {
             const newCache = {...prevCache};
             delete newCache[securedNameForDeletion];
@@ -234,21 +214,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           });
 
           if (selectedDocSecuredName === securedNameForDeletion) {
-            setSelectedDocSecuredName(null);
-            setSelectedDocOriginalName(null);
+            setSelectedDocSecuredName(null); setSelectedDocOriginalName(null);
             setChatMode('general'); 
-<<<<<<< HEAD
-<<<<<<< HEAD
-            setAnalysisStatusText(uploadedDocs.length > 1 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
-          } else if (uploadedDocs.length <= 1) { 
-=======
             setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
-          } else if (updatedDocs.length === 0) {
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-            setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
-          } else if (updatedDocs.length === 0) {
->>>>>>> parent of ac40090 (#mimd map connection)
+          } else if (updatedDocs.length === 0) { 
             setChatMode('general');
             setAnalysisStatusText("All documents deleted. Upload a new document.");
           }
@@ -273,20 +242,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       return;
     }
 
-    // Check cache first
     const cachedItem = utilityCache[selectedDocSecuredName]?.[action];
     if (cachedItem) {
       setUtilityResult(cachedItem);
       setIsModalOpen(true);
-<<<<<<< HEAD
-<<<<<<< HEAD
-      if (cachedItem.action === 'mindmap' && cachedItem.content) {
-        // Rendering is now handled by useEffect listening to isModalOpen and utilityResult
-      }
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
       setAnalysisStatusText(`Showing cached ${action} for ${selectedDocOriginalName}.`);
       toast({ title: "Showing Cached Utility", description: `${action} for ${selectedDocOriginalName} loaded from cache.` });
       return;
@@ -301,20 +260,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       const inputArgs = { documentName: selectedDocSecuredName, userToken: user.token }; 
 
       switch (action) {
-        case 'faq':
-          resultData = await generateFaq(inputArgs); 
-          break;
-        case 'topics':
-          resultData = await generateTopics(inputArgs);
-          break;
-        case 'mindmap':
-          resultData = await generateMindMap(inputArgs);
-          break;
-        case 'podcast':
-          resultData = await generatePodcastScript(inputArgs);
-          break;
-        default:
-          throw new Error("Unknown utility action");
+        case 'faq': resultData = await generateFaq(inputArgs); break;
+        case 'topics': resultData = await generateTopics(inputArgs); break;
+        case 'mindmap': resultData = await generateMindMap(inputArgs); break;
+        case 'podcast': resultData = await generatePodcastScript(inputArgs); break;
+        default: throw new Error("Unknown utility action");
       }
 
       let displayContent = "";
@@ -326,63 +276,32 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
          if (errorMsg.includes("Failed to retrieve or process text content") || errorMsg.includes("doc_text_for_llm is empty") || errorMsg.includes("not found") || errorMsg.includes("File Not Found")) {
           displayContent = `Could not perform '${action}' on "${selectedDocOriginalName}". The server failed to process this document's content. It might be corrupted, password-protected, or an unsupported format. Please try with a different document or check server logs.`;
           isProcessingError = true;
+          toast({ variant: "destructive", title: "Document Processing Error", description: `Server could not process ${selectedDocOriginalName} for ${action}.`, duration: 7000 });
         } else {
           displayContent = `An error occurred while generating ${action}: ${errorMsg}`;
+          toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg, duration: 7000 });
         }
-        toast({ variant: "destructive", title: `Error Generating ${action}`, description: isProcessingError ? `Document processing failed for ${selectedDocOriginalName}.` : errorMsg, duration: 7000 });
-        currentUtilityResult = {
-          title: `Error - ${action} for ${selectedDocOriginalName}`,
-          content: displayContent,
-          raw: resultData,
-          action,
-          error: resultData.error,
-          isProcessingError
-        };
+        currentUtilityResult = { title: `Error - ${action} for ${selectedDocOriginalName}`, content: displayContent, raw: resultData, action, error: resultData.error, isProcessingError };
       } else {
-<<<<<<< HEAD
-          if (action === 'topics' && resultData.content) { // generateTopics now returns content (string) and topics (array)
-            displayContent = resultData.content; // Use the string content for display
-=======
-          if (action === 'topics' && Array.isArray(resultData.topics)) {
-            displayContent = resultData.topics.length > 0 ? resultData.topics.map(t => `- ${t}`).join('\n') : "No topics extracted.";
-<<<<<<< HEAD
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
+          // Prepare display content based on action
+          if (action === 'topics') { // Flask returns content directly as string
+            displayContent = resultData.content || "No topics extracted or error in formatting.";
+          } else if (action === 'faq') {
+            displayContent = resultData.content || "No FAQ generated or error in formatting.";
+          } else if (action === 'mindmap') {
+            displayContent = resultData.content || resultData.mindMap || "No mind map data returned."; // content should be Mermaid string
           } else if (action === 'podcast') {
             displayContent = resultData.script || resultData.podcastScript || "No script returned.";
           } else { 
-            displayContent = resultData.content || resultData.faqList || resultData.mindMap || "No content returned.";
+            displayContent = resultData.content || "No content returned.";
           }
           toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
-          currentUtilityResult = {
-            title: `${action.charAt(0).toUpperCase() + action.slice(1)} for ${selectedDocOriginalName}`,
-            content: displayContent,
-            raw: resultData,
-            action,
-            error: undefined,
-            isProcessingError: false,
-          };
+          currentUtilityResult = { title: `${action.charAt(0).toUpperCase() + action.slice(1)} for ${selectedDocOriginalName}`, content: displayContent, raw: resultData, action, error: undefined, isProcessingError: false };
       }
       
-      // Store in cache
-      setUtilityCache(prevCache => ({
-        ...prevCache,
-        [selectedDocSecuredName]: {
-          ...(prevCache[selectedDocSecuredName] || {}),
-          [action]: currentUtilityResult,
-        }
-      }));
-
+      setUtilityCache(prevCache => ({ ...prevCache, [selectedDocSecuredName!]: { ...(prevCache[selectedDocSecuredName!] || {}), [action]: currentUtilityResult } }));
       setUtilityResult(currentUtilityResult);
       setIsModalOpen(true);
-<<<<<<< HEAD
-<<<<<<< HEAD
-      // Mindmap rendering is handled by useEffect based on isModalOpen & utilityResult
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
       setAnalysisStatusText(resultData.error ? `Error generating ${action}.` : `${action} for ${selectedDocOriginalName} received.`);
 
     } catch (error: any) {
@@ -390,32 +309,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       const errorMsg = error.message || "An unexpected error occurred.";
       setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg, duration: 7000 });
-      const errorResult: CachedUtilityResult = { 
-        title: `Error - ${action} for ${selectedDocOriginalName}`, 
-        content: `Failed to generate ${action}. Error: ${errorMsg}`, 
-        error: errorMsg, 
-        raw: { error: errorMsg }, 
-        action 
-      };
-<<<<<<< HEAD
-<<<<<<< HEAD
+      const errorResult: CachedUtilityResult = { title: `Error - ${action} for ${selectedDocOriginalName}`, content: `Failed to generate ${action}. Error: ${errorMsg}`, error: errorMsg, raw: { error: errorMsg }, action };
       if(selectedDocSecuredName){
         setUtilityCache(prevCache => ({ ...prevCache, [selectedDocSecuredName]: { ...(prevCache[selectedDocSecuredName] || {}), [action]: errorResult, } }));
       }
-=======
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
-      setUtilityCache(prevCache => ({ // Cache the error state too
-        ...prevCache,
-        [selectedDocSecuredName]: {
-          ...(prevCache[selectedDocSecuredName] || {}),
-          [action]: errorResult,
-        }
-      }));
-<<<<<<< HEAD
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
       setUtilityResult(errorResult);
       setIsModalOpen(true);
     } finally {
@@ -423,22 +320,20 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-  const renderMindmap = async (mermaidCode: string) => {
+  const renderMindmap = useCallback(async (mermaidCode: string) => {
     if (mindMapContainerRef.current && (window as any).mermaid) {
       setIsMindmapRendering(true);
       mindMapContainerRef.current.innerHTML = ''; 
       const mermaidDiv = document.createElement('div');
-      mermaidDiv.className = 'mermaid';
+      mermaidDiv.className = 'mermaid'; // Mermaid targets elements with this class
       
       let cleanedCode = mermaidCode.trim();
-      if (cleanedCode.startsWith("```mermaid")) {
-        cleanedCode = cleanedCode.substring("```mermaid".length).trim();
-      }
-      if (cleanedCode.endsWith("```")) {
-        cleanedCode = cleanedCode.substring(0, cleanedCode.length - "```".length).trim();
-      }
+      // Remove markdown code block fences if present
+      if (cleanedCode.startsWith("```mermaid")) cleanedCode = cleanedCode.substring("```mermaid".length).trim();
+      if (cleanedCode.startsWith("```")) cleanedCode = cleanedCode.substring("```".length).trim();
+      if (cleanedCode.endsWith("```")) cleanedCode = cleanedCode.substring(0, cleanedCode.length - "```".length).trim();
+      
+      // Ensure it starts with 'mindmap'
       if (!cleanedCode.toLowerCase().startsWith("mindmap")) {
           cleanedCode = "mindmap\n" + cleanedCode;
       }
@@ -446,6 +341,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       mermaidDiv.textContent = cleanedCode;
       mindMapContainerRef.current.appendChild(mermaidDiv);
       try {
+        // Use mermaid.run for dynamic rendering
         await (window as any).mermaid.run({ nodes: [mermaidDiv] });
       } catch (e: any) {
         console.error("Mermaid rendering error:", e);
@@ -454,45 +350,30 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         setIsMindmapRendering(false);
       }
     } else {
-      console.warn("Mermaid container or library not ready.");
+      console.warn("Mermaid container or library not ready for rendering.");
       if(mindMapContainerRef.current) mindMapContainerRef.current.innerHTML = '<p class="text-warning">Mindmap rendering library not available or container error.</p>';
       setIsMindmapRendering(false);
     }
-  };
+  }, []);
   
   useEffect(() => {
     if (isModalOpen && utilityResult?.action === 'mindmap' && utilityResult.content && !utilityResult.error && !utilityResult.isProcessingError) {
       renderMindmap(utilityResult.content);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isModalOpen, utilityResult]);
+  }, [isModalOpen, utilityResult, renderMindmap]);
 
 
   const documentContextForChat = chatMode === 'document' ? selectedDocOriginalName : null;
-=======
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
-  const documentNameForChat = chatMode === 'document' ? selectedDocSecuredName : null;
-  const displayDocumentNameForChatButton = chatMode === 'document' ? selectedDocOriginalName : null;
->>>>>>> parent of ac40090 (#mimd map connection)
+  const documentSecuredNameForChat = chatMode === 'document' ? selectedDocSecuredName : null;
 
 
   return (
-    <div className="flex flex-col flex-grow h-full overflow-hidden">
-<<<<<<< HEAD
-<<<<<<< HEAD
-      <ApiKeyManager />
-      <div className="my-4 flex justify-center items-center gap-2">
-=======
-      <div className="mb-6 flex justify-center items-center">
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-      <div className="mb-6 flex justify-center items-center">
->>>>>>> parent of ac40090 (#mimd map connection)
-        <Button 
+    <div className="flex flex-col flex-grow h-full overflow-hidden gap-4">
+      <div className="flex justify-center items-center gap-2 shrink-0">
+          <Button 
             onClick={handleToggleChatMode} 
             variant="outline" 
-            className="btn-glow-primary-hover shadow-md"
+            className="btn-glow-primary-hover shadow-md border-ai-engineer-border hover:bg-ai-engineer-card-bg"
             disabled={chatMode === 'document' ? false : (!selectedDocSecuredName && uploadedDocs.length > 0)} 
             title={
               chatMode === 'general' 
@@ -500,17 +381,14 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                 : "Switch to General Chat"
             }
           >
-            {chatMode === 'general' ? <MessageCircle className="mr-2 h-5 w-5" /> : <BookOpen className="mr-2 h-5 w-5 text-primary" />}
+            {chatMode === 'general' ? <MessageSquare className="mr-2 h-5 w-5" /> : <BookOpen className="mr-2 h-5 w-5 text-ai-engineer-accent-blue" />}
             {chatMode === 'general' ? 'General Chat Mode' : 'Document Chat Mode'}
-            {documentContextForChat ? <span className="ml-2 text-xs text-muted-foreground truncate max-w-[150px]">({documentContextForChat})</span> : ''}
+            {documentContextForChat ? <span className="ml-2 text-xs text-ai-engineer-text-muted truncate max-w-[100px] sm:max-w-[150px]">({documentContextForChat})</span> : ''}
           </Button>
-          {chatMode === 'general' && !selectedDocSecuredName && uploadedDocs.length > 0 && (
-            <p className="text-xs text-muted-foreground">Select a document in "Document Hub" to enable document-specific chat.</p>
-          )}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 flex-grow overflow-hidden">
-        <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8 flex flex-col">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 flex-grow overflow-hidden">
+        <div className="md:col-span-4 space-y-4 flex flex-col min-h-0">
           <DocumentUploadSection 
             onDocumentUpload={handleDocumentUpload} 
             isUploading={isUploading}
@@ -527,19 +405,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             onDeleteDocument={(doc) => setDocToDelete(doc)}
           />
         </div>
-        <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
+        <div className="md:col-span-8 flex flex-col min-h-0">
           <ChatTutorSection 
-<<<<<<< HEAD
-<<<<<<< HEAD
-            documentName={chatMode === 'document' ? selectedDocSecuredName : null} // Pass secured name for API, or null
-=======
-            documentName={documentNameForChat} 
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-            documentName={documentNameForChat} 
->>>>>>> parent of ac40090 (#mimd map connection)
+            documentSecuredName={documentSecuredNameForChat} 
+            documentOriginalName={documentContextForChat}
             user={user}
-            onClearDocumentContext={() => { // Called when "New Chat" is clicked in ChatTutorSection
+            onClearDocumentContext={() => { 
               setSelectedDocSecuredName(null);
               setSelectedDocOriginalName(null);
               setChatMode('general'); 
@@ -548,24 +419,21 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           />
         </div>
       </div>
-      <HelpTooltip />
 
       {utilityResult && (
         <AlertDialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-          <AlertDialogContent className="max-w-2xl glass-panel">
+          <AlertDialogContent className="max-w-2xl w-[90vw] md:w-full glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border text-ai-engineer-text-primary">
             <AlertDialogHeader>
-              <AlertDialogTitle className="font-headline text-primary flex items-center">
+              <AlertDialogTitle className="font-headline text-ai-engineer-accent-blue flex items-center">
                 {utilityResult.isProcessingError && <ServerCrash className="inline-block mr-2 h-5 w-5 text-destructive" />}
                 {utilityResult.title}
               </AlertDialogTitle>
-<<<<<<< HEAD
-<<<<<<< HEAD
               {utilityResult.action !== 'mindmap' && (
                 <AlertDialogDescription 
-                  className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
+                  className="max-h-[60vh] overflow-y-auto text-sm text-ai-engineer-text-secondary whitespace-pre-wrap scrollbar-thin"
                 >
                    {utilityResult.isProcessingError || utilityResult.error
-                      ? <p className="text-destructive">{utilityResult.content}</p> 
+                      ? <p className="text-ai-engineer-error-text">{utilityResult.content}</p> 
                       : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
                     }
                 </AlertDialogDescription>
@@ -573,96 +441,65 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             </AlertDialogHeader>
 
             {utilityResult.action === 'mindmap' && (
-              <div className="mt-2 max-h-[60vh] overflow-y-auto">
+              <div className="mt-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
                 {isMindmapRendering && (
                   <div className="flex items-center justify-center p-4">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <span className="ml-2">Rendering Mind Map...</span>
+                    <Loader2 className="h-8 w-8 animate-spin text-ai-engineer-accent-blue" />
+                    <span className="ml-2 text-ai-engineer-text-secondary">Rendering Mind Map...</span>
                   </div>
                 )}
-                <div ref={mindMapContainerRef} className={isMindmapRendering ? 'hidden' : ''}>
+                <div ref={mindMapContainerRef} className={cn("min-h-[300px] bg-ai-engineer-dark-bg/30 rounded", isMindmapRendering ? 'hidden' : '')}>
                   {/* Mermaid will render here or show error */}
-                  {(utilityResult.error || utilityResult.isProcessingError) && <p className="text-destructive">{utilityResult.content}</p>}
+                  {(utilityResult.error || utilityResult.isProcessingError) && !isMindmapRendering && 
+                    <p className="text-ai-engineer-error-text p-4">{utilityResult.content}</p>
+                  }
                 </div>
                 {utilityResult.raw?.content && !utilityResult.error && !utilityResult.isProcessingError && (
                   <details className="mt-2">
-                    <summary className="text-xs cursor-pointer text-muted-foreground">Show Mermaid Code</summary>
-=======
-              <AlertDialogDescription 
-                className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
-              >
-                 {utilityResult.isProcessingError 
-                    ? <p className="text-destructive">{utilityResult.content}</p> 
-                    : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
-                  }
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
-                <div className="mt-2">
-                    <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
->>>>>>> parent of ac40090 (#mimd map connection)
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
-                </div>
+                    <summary className="text-xs cursor-pointer text-ai-engineer-text-muted">Show Mermaid Code</summary>
+                    <pre className="text-xs bg-ai-engineer-input-bg p-2 rounded whitespace-pre-wrap max-h-20 overflow-auto scrollbar-thin">{utilityResult.raw.content}</pre>
+                  </details>
+                )}
+              </div>
             )}
-<<<<<<< HEAD
             
-            {utilityResult.raw?.thinking && !utilityResult.isProcessingError && !utilityResult.error && (
-=======
-=======
-              <AlertDialogDescription 
-                className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
-              >
-                 {utilityResult.isProcessingError 
-                    ? <p className="text-destructive">{utilityResult.content}</p> 
-                    : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
-                  }
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
-                <div className="mt-2">
-                    <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
-                </div>
-            )}
->>>>>>> parent of ac40090 (#mimd map connection)
             {utilityResult.raw?.thinking && !utilityResult.isProcessingError && (
->>>>>>> parent of ac40090 (#mimd map connection)
               <details className="mt-2">
-                <summary className="text-xs cursor-pointer text-muted-foreground">Show Reasoning</summary>
-                <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.thinking}</pre>
+                <summary className="text-xs cursor-pointer text-ai-engineer-text-muted">Show Reasoning</summary>
+                <pre className="text-xs bg-ai-engineer-input-bg p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto scrollbar-thin">{utilityResult.raw.thinking}</pre>
               </details>
             )}
             {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && !utilityResult.error && !utilityResult.isProcessingError && (
                 <details className="mt-2">
-                    <summary className="text-xs cursor-pointer text-muted-foreground">Show Processed Source (Mindmap)</summary>
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.latex_source}</pre>
+                    <summary className="text-xs cursor-pointer text-ai-engineer-text-muted">Show Processed Source (Mindmap)</summary>
+                    <pre className="text-xs bg-ai-engineer-input-bg p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto scrollbar-thin">{utilityResult.raw.latex_source}</pre>
                 </details>
             )}
             {utilityResult.raw?.audio_url && utilityResult.action === 'podcast' && !utilityResult.error && !utilityResult.isProcessingError && (
                 <div className="mt-4">
-                    <h4 className="text-sm font-medium text-foreground">Podcast Audio</h4>
+                    <h4 className="text-sm font-medium text-ai-engineer-text-primary">Podcast Audio</h4>
                     <audio controls src={utilityResult.raw.audio_url} className="w-full mt-1">
                         Your browser does not support the audio element.
                     </audio>
                 </div>
             )}
-            <AlertDialogFooter>
-              <AlertDialogAction onClick={() => setIsModalOpen(false)} className="btn-glow-primary-hover">Close</AlertDialogAction>
+            <AlertDialogFooter className="mt-4">
+              <AlertDialogCancel className="bg-muted text-muted-foreground hover:bg-muted/80">Close</AlertDialogCancel>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       )}
       {docToDelete && (
         <AlertDialog open={!!docToDelete} onOpenChange={(open) => !open && setDocToDelete(null)}>
-          <AlertDialogContent className="glass-panel">
+          <AlertDialogContent className="glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border text-ai-engineer-text-primary">
             <AlertDialogHeader>
-              <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
-              <AlertDialogDescription>
+              <AlertDialogTitle className="text-ai-engineer-accent-blue">Confirm Deletion</AlertDialogTitle>
+              <AlertDialogDescription className="text-ai-engineer-text-secondary">
                 Are you sure you want to delete the document "{docToDelete.name}"? This action cannot be undone, and any cached utilities for this document will be removed.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => setDocToDelete(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel className="bg-muted text-muted-foreground hover:bg-muted/80">Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={handleConfirmDeleteDocument} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 Delete
               </AlertDialogAction>
@@ -675,5 +512,3 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 };
 
 export default AppContent;
-
-    

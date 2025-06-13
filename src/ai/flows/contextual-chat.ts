@@ -1,6 +1,12 @@
+// This Genkit flow for direct Gemini chat from Next.js is no longer
+// the primary chat mechanism for the UI, as chat is now proxied to Flask.
+// Keeping the file for reference or if Genkit is used for other features.
+// It won't be directly called by the main ChatTutorSection component anymore.
+
 'use server';
 /**
  * @fileOverview Defines a Genkit flow for simple chat using Gemini.
+ * THIS FLOW IS NOT USED BY THE MAIN UI CHAT WHICH NOW GOES TO FLASK.
  */
 
 import { ai } from '@/ai/genkit';
@@ -12,6 +18,7 @@ export const GeminiChatInputSchema = z.object({
     role: z.enum(['user', 'model']),
     content: z.string(),
   })).optional().describe('Optional: Previous conversation history.'),
+  documentContent: z.string().optional().describe("Optional content from a document to provide context.")
 });
 export type GeminiChatInput = z.infer<typeof GeminiChatInputSchema>;
 
@@ -22,51 +29,38 @@ export type GeminiChatOutput = z.infer<typeof GeminiChatOutputSchema>;
 
 
 export const geminiChatPrompt = ai.definePrompt({
-  name: 'geminiChatPrompt',
+  name: 'standaloneGeminiChatPrompt', // Renamed to avoid confusion
   input: { schema: GeminiChatInputSchema },
-  // Output schema is conceptual for a non-streaming response.
-  // output: { schema: GeminiChatOutputSchema },
-
-  system: `You are a helpful and versatile AI assistant powered by Gemini.
-Provide comprehensive, helpful, and accurate information.
-Be conversational and engaging.
-Structure your answers clearly. Use Markdown for formatting if appropriate (e.g., lists, bolding, code blocks).
-If the user's query is ambiguous, ask for clarification.
-If the user query is inappropriate, harmful, or violates safety guidelines, decline to answer politely.`,
-
+  system: `You are a helpful AI assistant. 
+  {{#if documentContent}}
+  Base your answer primarily on the following document content:
+  --- DOCUMENT START ---
+  {{{documentContent}}}
+  --- DOCUMENT END ---
+  If the question cannot be answered from the document, say so.
+  {{else}}
+  Answer the user's question comprehensively.
+  {{/if}}`,
   prompt: `User Query: {{{query}}}
 
 AI Answer:
 `,
 });
 
-// Define the Genkit flow (mainly for conceptual definition if API route handles streaming directly)
 export const geminiChatFlow = ai.defineFlow(
   {
-    name: 'geminiChatFlow',
+    name: 'standaloneGeminiChatFlow',
     inputSchema: GeminiChatInputSchema,
     outputSchema: GeminiChatOutputSchema, 
   },
   async (input) => {
-    const generationResponse = await geminiChatPrompt(input); // This uses the defined prompt
+    const generationResponse = await geminiChatPrompt(input);
     const outputContent = generationResponse.output();
-
-    if (!outputContent) {
-      return {
-        answer: "Sorry, I couldn't generate a response. The model returned no output.",
-      };
-    }
-    
-    // Assuming output is text or has a text() method
-    const answerText = typeof outputContent === 'string' ? outputContent : (outputContent as any).answer || JSON.stringify(outputContent);
-    
-    return {
-      answer: answerText,
-    };
+    const answerText = typeof outputContent === 'string' ? outputContent : (outputContent as any)?.answer || JSON.stringify(outputContent);
+    return { answer: answerText || "Sorry, I couldn't generate a response." };
   }
 );
 
-// Wrapper function for easier invocation (optional)
-export async function getGeminiChatResponse(input: GeminiChatInput): Promise<GeminiChatOutput> {
+export async function getStandaloneGeminiChatResponse(input: GeminiChatInput): Promise<GeminiChatOutput> {
   return geminiChatFlow(input);
 }

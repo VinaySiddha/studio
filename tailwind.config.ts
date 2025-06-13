@@ -19,7 +19,7 @@ const config = {
     },
     extend: {
       fontFamily: {
-        sans: ['var(--font-inter)', 'sans-serif'], // Using Inter as primary sans-serif
+        sans: ['var(--font-inter)', 'system-ui', '-apple-system', 'BlinkMacSystemFont', "Segoe UI", 'Roboto', "Helvetica Neue", 'Arial', "Noto Sans", 'sans-serif', "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -55,6 +55,22 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Custom theme colors from image
+        'ai-engineer': {
+          'dark-bg': 'hsl(var(--ai-engineer-dark-bg))',
+          'card-bg': 'hsl(var(--ai-engineer-card-bg))',
+          'border': 'hsl(var(--ai-engineer-border))',
+          'input-bg': 'hsl(var(--ai-engineer-input-bg))',
+          'text-primary': 'hsl(var(--ai-engineer-text-primary))',
+          'text-secondary': 'hsl(var(--ai-engineer-text-secondary))',
+          'text-muted': 'hsl(var(--ai-engineer-text-muted))',
+          'accent-blue': 'hsl(var(--ai-engineer-accent-blue))',
+          'accent-teal': 'hsl(var(--ai-engineer-accent-teal))',
+          'accent-purple': 'hsl(var(--ai-engineer-accent-purple))',
+          'message-user': 'hsl(var(--ai-engineer-message-user))',
+          'message-bot': 'hsl(var(--ai-engineer-message-bot))',
+          'error-text': 'hsl(var(--ai-engineer-error-text))',
+        },
         chart: {
           "1": "hsl(var(--chart-1))",
           "2": "hsl(var(--chart-2))",
@@ -87,4 +103,4 @@ const config = {
   plugins: [require("tailwindcss-animate")],
 } satisfies Config
 
-export default config
+export default config;

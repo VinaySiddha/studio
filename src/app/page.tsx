@@ -1,58 +1,85 @@
-// src/app/page.tsx
-'use client';
 
+'use client';
 import type { FC } from 'react';
 import { useState, useEffect } from 'react';
-import ChatInterface from '@/components/chat-interface';
-import { Info } from 'lucide-react';
+import AppContent from '@/components/app-content'; // This will be the main layout component
+import LoginForm from '@/components/login-form';
+import SignupForm from '@/components/signup-form';
+import LandingPage from '@/components/landing-page'; // A simple landing page
 
+export interface User {
+  token: string;
+  username: string;
+  email?: string;
+  firstname?: string;
+  lastname?: string;
+  // Add other user fields if necessary
+}
 
 const HomePage: FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup'>('landing');
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
+    // Check for existing token on mount
+    const storedToken = localStorage.getItem('aiTutorAuthToken');
+    const storedUsername = localStorage.getItem('aiTutorUsername');
+    if (storedToken && storedUsername) {
+      setUser({ token: storedToken, username: storedUsername });
+    }
   }, []);
+
+  const handleLoginSuccess = (userData: User) => {
+    setUser(userData);
+    localStorage.setItem('aiTutorAuthToken', userData.token);
+    localStorage.setItem('aiTutorUsername', userData.username);
+    // Store other details if needed
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('aiTutorAuthToken');
+    localStorage.removeItem('aiTutorUsername');
+    localStorage.removeItem('aiTutorThreadId'); // Also clear threadId on logout
+    setAuthView('login'); // Go to login page after logout
+  };
 
   if (!isClient) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
-        <div className="animate-pulse text-xl">Loading Chat Interface...</div>
+      <div className="flex items-center justify-center min-h-screen bg-ai-engineer-dark-bg">
+        <div className="text-xl text-ai-engineer-text-primary">Loading Tutor Interface...</div>
       </div>
     );
   }
 
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4 font-sans">
-      <div className="flex flex-col items-center mb-8 text-center">
-        <h1 className="text-4xl font-bold text-primary mb-2 tracking-tight">
-          Simple AI Chatbot
-        </h1>
-        <p className="text-lg text-muted-foreground max-w-md">
-          Powered by Genkit and Gemini.
-        </p>
-      </div>
-        
-      <div className="mb-4 p-3 rounded-md bg-blue-900/30 border border-blue-700 text-blue-300 text-xs flex items-start gap-2 max-w-md">
-          <Info size={28} className="shrink-0 mt-0.5 text-blue-400"/>
-          <div>
-            <strong>Important:</strong> This chatbot uses Genkit with the Google AI plugin, which relies on a 
-            <code className="bg-muted/50 text-foreground px-1 py-0.5 rounded mx-0.5">GOOGLE_API_KEY</code> environment variable 
-            set on the server where the Next.js application is running.
-          </div>
-      </div>
+  if (!user) {
+    if (authView === 'login') {
+      return <LoginForm onLoginSuccess={handleLoginSuccess} onSwitchToSignup={() => setAuthView('signup')} />;
+    }
+    if (authView === 'signup') {
+      return <SignupForm onSignupSuccess={handleLoginSuccess} onSwitchToLogin={() => setAuthView('login')} />;
+    }
+    return <LandingPage onShowLogin={() => setAuthView('login')} onShowSignup={() => setAuthView('signup')} />;
+  }
 
-      <ChatInterface />
-      
-      <footer className="mt-12 text-center text-xs text-muted-foreground/70 w-full max-w-xl">
-        <p>
-          Ensure your <code className="bg-muted/50 text-foreground px-1 py-0.5 rounded mx-0.5">GOOGLE_API_KEY</code> environment variable is set on the server.
-        </p>
-        <p className="mt-1">
-          Chatbot Prototype v0.1.0
-        </p>
-      </footer>
-    </div>
+  return (
+    <main className="flex flex-col h-screen bg-ai-engineer-dark-bg text-ai-engineer-text-primary p-4 overflow-hidden">
+      <header className="flex justify-between items-center mb-4 shrink-0">
+        <h1 className="text-2xl font-headline text-ai-engineer-accent-blue">Local AI Engineering Tutor</h1>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-ai-engineer-text-secondary">Welcome, {user.username}</span>
+          <button 
+            onClick={handleLogout} 
+            className="px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/80 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
+      <AppContent user={user} />
+    </main>
   );
 };
 

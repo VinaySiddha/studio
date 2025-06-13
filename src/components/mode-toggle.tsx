@@ -1,4 +1,10 @@
-// This component is no longer used in the simplified version.
-// Kept as an empty file to satisfy the change operation if needed,
-// but ideally this file would be deleted from the project.
-// Chat mode toggling functionality has been removed.
+// This component is not used in the restored "Local AI Engineering Tutor" UI.
+// Chat mode is managed within AppContent.
+'use client';
+import type { FC } from 'react';
+
+const ModeTogglePlaceholder: FC = () => {
+  return null;
+};
+
+export default ModeTogglePlaceholder;

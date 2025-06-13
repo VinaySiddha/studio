@@ -6,11 +6,12 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import ChatMessage, { type Message as MessageType, type Reference } from '@/components/chat-message';
-import { MessageSquare, SendHorizontal, Loader2, Mic, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react';
+import ChatMessage, { type Message as MessageType } from '@/components/chat-message';
+import { MessageSquare, SendHorizontal, Loader2, Mic, StopCircle, Files, History, Edit3, Trash2, Check, XCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDFooter, AlertDialogHeader as AlertDHeader, AlertDialogTitle as AlertDTitle } from '@/components/ui/alert-dialog';
+
 import {
   listChatThreadsAction,
   getThreadHistoryAction,
@@ -22,44 +23,32 @@ import {
 import type { User } from '@/app/page';
 
 interface ChatTutorSectionProps {
-<<<<<<< HEAD
-<<<<<<< HEAD
-  documentName: string | null; // This will be the SECURED name for API calls or null for general chat
-=======
-  documentName: string | null; // This will be the securedName if a document is selected for context
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-  documentName: string | null; // This will be the securedName if a document is selected for context
->>>>>>> parent of ac40090 (#mimd map connection)
-  documentName: string | null; 
+  documentSecuredName: string | null; // Secured name for API
+  documentOriginalName: string | null; // Original name for display
   user: User;
-  onClearDocumentContext: () => void;
+  onClearDocumentContext: () => void; // To reset AppContent's state when new chat is forced
 }
 
 interface Thread {
   thread_id: string;
   title: string;
   last_updated: string; 
+  // Add user_id if your Flask backend returns it and it's useful here
 }
 
-const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onClearDocumentContext }) => {
+const GENERAL_QUERY_PLACEHOLDER = "No document provided for context."; // Matches Flask
+
+const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentSecuredName, documentOriginalName, user, onClearDocumentContext }) => {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
-  const [chatStatusText, setChatStatusText] = useState("Initializing...");
-  const [thinkingMessage, setThinkingMessage] = useState<string | null>(null);
-
+  const [chatStatusText, setChatStatusText] = useState("Initializing chat...");
+  
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-<<<<<<< HEAD
-<<<<<<< HEAD
   const audioStreamRef = useRef<MediaStream | null>(null);
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
->>>>>>> parent of ac40090 (#mimd map connection)
 
   const [isSessionsDialogOpen, setIsSessionsDialogOpen] = useState(false);
   const [availableThreads, setAvailableThreads] = useState<Thread[]>([]);
@@ -67,21 +56,54 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const [threadToRename, setThreadToRename] = useState<Thread | null>(null);
   const [newThreadTitle, setNewThreadTitle] = useState("");
   const [threadToDelete, setThreadToDelete] = useState<Thread | null>(null);
-
+  
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
-
   const isBrowser = typeof window !== 'undefined';
   const isMediaRecorderSupported = isBrowser && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
-  const fetchThreads = useCallback(async () => {
+  // Update chat status text when document context changes
+  useEffect(() => {
+    if (documentOriginalName) {
+      setChatStatusText(`Chatting about: ${documentOriginalName.substring(0,30)}${documentOriginalName.length > 30 ? '...' : ''}`);
+    } else {
+      setChatStatusText("General Chat Mode");
+    }
+  }, [documentOriginalName]);
+
+  // Load initial thread or set initial message
+  useEffect(() => {
+    const storedThreadId = localStorage.getItem('aiTutorThreadId');
+    if (storedThreadId) {
+      setCurrentThreadId(storedThreadId);
+      if (user.token) loadChatHistory(storedThreadId);
+    } else {
+      setMessages([{
+        id: 'initial-bot-msg', sender: 'ai',
+        text: "Welcome to the AI Engineering Tutor! Select a document or ask a general question.",
+        timestamp: new Date(),
+      }]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.token]); // Only on initial mount or user token change
+
+
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+      const viewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
+      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    }
+  }, [messages, isLoading]); // isLoading also to scroll thinking message into view
+
+  const fetchThreads = useCallback(async (showToast = false) => {
     if (!user.token) return;
     setIsLoadingThreads(true);
     try {
       const result = await listChatThreadsAction(user.token);
       if (result.error) throw new Error(result.error);
       setAvailableThreads(result.threads?.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime()) || []);
+      if (showToast) toast({title: "Sessions Loaded", description: `${result.threads?.length || 0} sessions found.`});
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error Loading Sessions", description: error.message });
       setAvailableThreads([]);
@@ -90,41 +112,10 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
   }, [user.token, toast]);
 
-  useEffect(() => {
-    const storedThreadId = localStorage.getItem('aiTutorThreadId');
-    if (storedThreadId) {
-      setCurrentThreadId(storedThreadId);
-      if (user.token) loadChatHistory(storedThreadId);
-    } else {
-      setMessages([{
-        id: 'initial-bot-message',
-        sender: 'ai',
-        text: documentName ? `Ask me anything about ${documentName}!` : "Upload or select a document to chat about, or ask a general question.",
-        timestamp: new Date(),
-      }]);
-    }
-    // This effect updates status text based on documentName (which reflects chat mode)
-    const displayDocName = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-    setChatStatusText(displayDocName ? `Chatting about: ${displayDocName}` : "General Chat Mode");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentName, user.token]); // Only re-run if documentName (context) or user token changes
-
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
-      if (scrollViewport) {
-        scrollViewport.scrollTop = scrollViewport.scrollHeight;
-      }
-    }
-  }, [messages, thinkingMessage]);
-
   const handleStopStream = () => {
     if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsLoading(false);
-      setThinkingMessage(null);
-      setChatStatusText("Response stopped by user.");
-      setMessages((prev) => prev.map(m => m.isLoading ? {...m, text: m.text === '...' ? "[Response stopped by user]" : m.text + "\n[Response stopped by user]", isLoading: false} : m));
+      abortControllerRef.current.abort("User stopped response");
+      // isLoading will be set to false in handleSendMessage's finally block
     }
   };
 
@@ -133,155 +124,122 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     const query = inputValue.trim();
     if (!query) return;
     if (!user.token) {
-      toast({ variant: "destructive", title: "Error", description: "You must be logged in to chat." });
+      toast({ variant: "destructive", title: "Authentication Error", description: "Please login to chat." });
       return;
     }
 
-    const userMessage: MessageType = {
-      id: Date.now().toString() + '-user',
-      sender: 'user',
-      text: query,
-      timestamp: new Date(),
-    };
+    const userMessage: MessageType = { id: Date.now().toString() + '-user', sender: 'user', text: query, timestamp: new Date() };
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setIsLoading(true);
     setChatStatusText("AI Tutor is thinking...");
-    setThinkingMessage("AI is preparing your response...");
 
     abortControllerRef.current = new AbortController();
-    const currentAiMessageId = Date.now().toString() + '-ai-stream'; // Ensure unique ID for streaming message
-    let currentAiMessageText = '';
-
-    setMessages((prev) => [...prev, {
-      id: currentAiMessageId,
-      sender: 'ai',
-      text: '...',
-      timestamp: new Date(),
-      isLoading: true,
+    const aiMessageId = Date.now().toString() + '-ai';
+    
+    // Add a placeholder AI message for streaming
+    setMessages(prev => [...prev, {
+        id: aiMessageId, sender: 'ai', text: '', isLoading: true, timestamp: new Date()
     }]);
+    let accumulatedResponse = "";
 
     try {
-      const requestBody = {
-        query: query,
-        documentContent: documentName || GENERAL_QUERY_PLACEHOLDER, 
-        threadId: currentThreadId || undefined,
-        // No authToken here, /api/chat with Genkit doesn't need it for this specific purpose
+      const requestBodyForFlask = {
+        query,
+        documentContent: documentSecuredName || GENERAL_QUERY_PLACEHOLDER,
+        thread_id: currentThreadId, // Flask expects thread_id
+        // Auth token is passed via header in actions.ts -> fetchFlaskAPI
       };
-
+      
+      // Using Next.js API route to proxy to Flask
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+        body: JSON.stringify({
+            query: requestBodyForFlask.query,
+            documentContent: requestBodyForFlask.documentContent,
+            threadId: requestBodyForFlask.thread_id,
+            authToken: user.token // Pass token for the Next.js API route to use
+        }),
         signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok || !response.body) {
-        const errorData = await response.json().catch(() => ({ message: `HTTP error! Status: ${response.status}` }));
-        throw new Error(errorData.message || errorData.error || `Failed to connect to chat API. Status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({ error: `Request failed: ${response.status}` }));
+        throw new Error(errorData.error || `API request failed with status ${response.status}`);
       }
-
+      
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let flaskResponseEnded = false;
 
-      while (true) {
+      while (!flaskResponseEnded) {
         const { value, done } = await reader.read();
-        if (done) break;
-
+        if (done) {
+          flaskResponseEnded = true;
+          break;
+        }
         const sseMessages = decoder.decode(value, { stream: true }).split('\n\n').filter(Boolean);
+        
         for (const sseMessage of sseMessages) {
           if (sseMessage.startsWith('data: ')) {
             const rawData = sseMessage.substring(6);
-            if (!rawData.trim()) continue; 
-            
-            let data;
             try {
-              data = JSON.parse(rawData);
-            } catch (parseError: any) {
-              console.error('[ChatTutor] Error parsing SSE JSON:', parseError.message, "Raw SSE part:", rawData);
-              setMessages(prev => prev.map(m =>
-                m.id === currentAiMessageId ? {
-                  ...m,
-                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: malformed JSON chunk]`,
-                  isError: true, isLoading: false
-                } : m));
-              continue; 
-            }
-            if (typeof data !== 'object' || data === null) {
-              console.warn("[ChatTutor] Received non-object or null SSE data from stream:", data);
-              setMessages(prev => prev.map(m =>
-                m.id === currentAiMessageId ? {
-                  ...m,
-                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: unexpected data format]`,
-                  isError: true, isLoading: false
-                } : m));
-              continue;
-            }
-
-            if (data.type === 'thinking' && typeof data.message === 'string') {
-              setThinkingMessage(data.message);
-            } else if (data.type === 'chunk' && typeof data.content === 'string') {
-              currentAiMessageText += data.content;
-              setMessages((prev) => prev.map(msg =>
-                msg.id === currentAiMessageId ? { ...msg, text: currentAiMessageText, isLoading: true } : msg
-              ));
-            } else if (data.type === 'final') {
-              currentAiMessageText = (data.answer && typeof data.answer === 'string' ? data.answer : currentAiMessageText) || "";
-              const finalThreadId = (data.thread_id && typeof data.thread_id === 'string' ? data.thread_id : null) || currentThreadId;
-
-              if (finalThreadId && finalThreadId !== currentThreadId) {
-                setCurrentThreadId(finalThreadId);
-                localStorage.setItem('aiTutorThreadId', finalThreadId);
+              const jsonData = JSON.parse(rawData);
+              if (jsonData.type === 'thinking') {
+                setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, thinking: jsonData.message} : m));
+              } else if (jsonData.type === 'chunk' || (jsonData.answer && !jsonData.type)) { // Handle chunk or direct answer part
+                const contentToAdd = jsonData.content || jsonData.answer || "";
+                accumulatedResponse += contentToAdd;
+                setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, text: accumulatedResponse, isLoading: true} : m));
+              } else if (jsonData.type === 'final') { // Flask SSE structure
+                accumulatedResponse = jsonData.answer || accumulatedResponse;
+                const finalThreadId = jsonData.thread_id || currentThreadId;
+                if (finalThreadId && finalThreadId !== currentThreadId) {
+                    setCurrentThreadId(finalThreadId);
+                    localStorage.setItem('aiTutorThreadId', finalThreadId);
+                }
+                setMessages(prev => prev.map(m => m.id === aiMessageId ? {
+                    ...m, 
+                    text: accumulatedResponse, 
+                    references: jsonData.references || [], 
+                    thinking: jsonData.thinking || m.thinking, // Preserve thinking if already set
+                    isLoading: false,
+                  } : m));
+                flaskResponseEnded = true; // Assume final message means stream end from Flask
+              } else if (jsonData.type === 'error') {
+                throw new Error(jsonData.error || 'Stream error from backend');
               }
-              setMessages((prev) => prev.map(msg =>
-                msg.id === currentAiMessageId ? {
-                  ...msg,
-                  text: currentAiMessageText || "[AI response complete]",
-                  references: (data.references && Array.isArray(data.references)) ? data.references as Reference[] : [],
-                  thinking: (data.thinking && typeof data.thinking === 'string') ? data.thinking : undefined,
-                  isLoading: false
-                } : msg
-              ));
-            } else if (data.type === 'error') {
-              const errorMessageContent = (data.error && typeof data.error === 'string') ? data.error : ((data.message && typeof data.message === 'string') ? data.message : 'Stream error from server.');
-              throw new Error(errorMessageContent);
-            } else {
-              console.warn("[ChatTutor] Received SSE data with unknown type or structure from stream:", data);
+            } catch (parseError: any) {
+              console.warn('Error parsing Flask SSE JSON:', parseError, "Raw SSE data:", rawData);
+              // If it's not JSON, append as text
+              accumulatedResponse += rawData;
+               setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, text: accumulatedResponse, isLoading: true} : m));
             }
           }
         }
       }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-         setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, text: (m.text === "..." ? "" : m.text) + "[Response stopped by user]", isLoading: false} : m));
+      // After loop, ensure isLoading is false for the AI message if it wasn't marked by 'final'
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, isLoading: false, text: accumulatedResponse || "[AI response ended]" } : m));
+
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, text: accumulatedResponse + "\n[Response stopped by user]", isLoading: false, isError: true} : m));
       } else {
-        console.error('Error fetching AI response:', error);
-        const errorMessage = String(error.message || 'Unknown chat error');
-        setMessages((prev) => prev.map(msg =>
-          msg.id === currentAiMessageId ? {
-            ...msg,
-            text: currentAiMessageText || `Sorry, I encountered an error: ${errorMessage}`,
-            isError: true,
-            isLoading: false
-          } : msg
-        ));
+        console.error('Chat error:', err);
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? {...m, text: `Error: ${err.message || 'Failed to get response.'}`, isLoading: false, isError: true} : m));
       }
     } finally {
-      abortControllerRef.current = null;
       setIsLoading(false);
-      setThinkingMessage(null);
-      setMessages(prev => prev.map(m => 
-        m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m
-      ));
-      const displayDocNameFinally = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-      setChatStatusText(displayDocNameFinally ? `Chatting about: ${displayDocNameFinally}` : "General Chat Mode");
+      if (documentOriginalName) setChatStatusText(`Chatting about: ${documentOriginalName.substring(0,30)}${documentOriginalName.length > 30 ? '...' : ''}`);
+      else setChatStatusText("General Chat Mode");
+      abortControllerRef.current = null;
     }
   };
-
+  
   const handleEditMessage = (messageId: string, newText: string) => {
-    // UI-only edit for now. To resend to AI, this would need to trigger handleSendMessage
     setMessages(prev => prev.map(m => m.id === messageId ? {...m, text: newText, isEdited: true, timestamp: new Date() } : m));
-    toast({ title: "Message Updated", description: "Your message text has been updated in the chat display. This does not resend to the AI." });
+    toast({ title: "Message Updated", description: "Your message has been updated locally." });
   };
 
   const handleCopyMessage = (text: string) => {
@@ -292,408 +250,209 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
 
   const handleFeedback = (messageId: string, feedbackType: 'like' | 'dislike') => {
     setMessages(prev => prev.map(m => m.id === messageId ? {...m, feedback: m.feedback === feedbackType ? undefined : feedbackType } : m));
-    toast({ title: `Feedback: ${feedbackType}` });
+    toast({ title: `Feedback: ${feedbackType} submitted (locally)` });
   };
 
   const handleNewChat = async () => {
-    if (!user.token) {
-        toast({variant: "destructive", title: "Error", description: "Login to start a new chat."});
-        return;
-    }
+    if (!user.token) { toast({variant: "destructive", title: "Login Required"}); return; }
     setIsLoading(true);
     setChatStatusText("Starting new chat...");
-    onClearDocumentContext(); 
+    onClearDocumentContext(); // Clears document selection in AppContent
     try {
-      const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString());
-      if (result.error || !result.thread_id) {
-        throw new Error(result.error || "Failed to create new thread on Flask backend.");
-      }
+      const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString().substring(0,8));
+      if (result.error || !result.thread_id) throw new Error(result.error || "Failed to create new thread.");
       setCurrentThreadId(result.thread_id);
       localStorage.setItem('aiTutorThreadId', result.thread_id);
-      setMessages([{
-        id: 'new-chat-initial-msg-' + result.thread_id,
-        sender: 'ai',
-        text: "New chat session started. How can I help you?",
-        timestamp: new Date(),
-      }]);
+      setMessages([{ id: 'new-chat-init-' + result.thread_id, sender: 'ai', text: "New chat session started!", timestamp: new Date() }]);
       setChatStatusText(`General Chat Mode (Thread: ${result.thread_id.substring(0,8)}...)`);
       toast({ title: "New Chat Started" });
     } catch (error: any) {
       toast({ variant: "destructive", title: "New Chat Error", description: error.message });
-      setChatStatusText("Error starting new chat.");
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   };
 
   const handleShowSessions = async () => {
-    if (!user.token) {
-      toast({ variant: "destructive", title: "Error", description: "Login to view sessions." });
-      return;
-    }
+    if (!user.token) { toast({variant: "destructive", title: "Login Required"}); return; }
     setIsLoadingThreads(true);
     setIsSessionsDialogOpen(true);
-    // Fetching threads might change if Genkit handles session history differently
-    // For now, assume listChatThreadsAction is still relevant or adapt as needed
-    await fetchThreads(true); 
+    await fetchThreads(true);
   };
 
   const loadChatHistory = async (threadIdToLoad: string) => {
-    if (!user.token) {
-      toast({ variant: "destructive", title: "Authentication Error", description: "Cannot load history." });
-      return;
-    }
+    if (!user.token) return;
     setIsLoading(true);
-    setChatStatusText(`Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
+    setChatStatusText(`Loading history...`);
     setMessages([]);
-    onClearDocumentContext(); 
+    onClearDocumentContext(); // Reset document context when loading history
     try {
       const result = await getThreadHistoryAction(user.token, threadIdToLoad);
       if (result.error) throw new Error(result.error);
-
       const fetchedMessages: MessageType[] = (result.messages || []).map((msg: any) => ({
         id: msg.message_id || msg._id || String(Date.now() + Math.random()),
-        sender: msg.sender,
+        sender: msg.sender.toLowerCase() as 'user' | 'ai' | 'bot',
         text: msg.message_text,
         timestamp: new Date(msg.timestamp),
         references: (msg.references && Array.isArray(msg.references)) ? msg.references : (msg.references_json ? JSON.parse(msg.references_json) : []),
         thinking: msg.thinking || msg.cot_reasoning,
-        isEdited: msg.is_edited,
-        isError: msg.is_error,
+        isEdited: msg.is_edited || false,
+        isError: msg.is_error || false,
       }));
-
       setMessages(fetchedMessages);
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
-      const displayDocNameLoadedHist = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-      setChatStatusText(displayDocNameLoadedHist ? `Chatting about: ${displayDocNameLoadedHist} (Thread: ${threadIdToLoad.substring(0,8)})` : `General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
-      if (fetchedMessages.length === 0) {
-          toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
-          setMessages([{id: 'empty-thread-msg', sender: 'ai', text: "This chat is empty. Ask something!", timestamp: new Date()}]);
-      } else {
-        toast({ title: "Chat History Loaded", description: `Loaded session ${threadIdToLoad.substring(0,8)}...`});
-      }
+      // Determine title for status
+      const currentLoadedThread = availableThreads.find(t => t.thread_id === threadIdToLoad) || {title: `Thread ${threadIdToLoad.substring(0,8)}...`};
+      setChatStatusText(`Loaded: ${currentLoadedThread.title}`);
+      if (fetchedMessages.length === 0) toast({ title: "Empty Thread" });
+      else toast({ title: "Chat History Loaded" });
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error Loading History", description: error.message });
-      setChatStatusText("Error loading history.");
-      setMessages([{id: 'load-error-msg', sender: 'ai', text: `Error loading chat: ${error.message}`, timestamp: new Date(), isError: true}]);
-    } finally {
-      setIsLoading(false);
-      setIsSessionsDialogOpen(false);
-    }
+      setMessages([{id: 'load-error', sender: 'ai', text: `Error: ${error.message}`, timestamp: new Date(), isError: true}]);
+    } finally { setIsLoading(false); setIsSessionsDialogOpen(false); }
   };
 
   const handleRenameThread = async () => {
     if (!threadToRename || !newThreadTitle.trim() || !user.token) return;
-    const oldTitle = threadToRename.title;
-    const threadIdToUpdate = threadToRename.thread_id;
-
-    toast({ title: `Renaming thread to "${newThreadTitle}"...` });
     try {
-      const result = await renameChatThreadAction(user.token, threadIdToUpdate, newThreadTitle.trim());
-      if (result.success) {
-        toast({ title: "Thread Renamed", description: `"${oldTitle}" is now "${newThreadTitle}".` });
-        await fetchThreads();
-      } else {
-        throw new Error(result.error || "Failed to rename thread.");
-      }
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "Rename Failed", description: error.message });
-    }
-    setThreadToRename(null);
-    setNewThreadTitle("");
+      await renameChatThreadAction(user.token, threadToRename.thread_id, newThreadTitle.trim());
+      toast({ title: "Thread Renamed" });
+      await fetchThreads();
+    } catch (error: any) { toast({ variant: "destructive", title: "Rename Failed", description: error.message }); }
+    setThreadToRename(null); setNewThreadTitle("");
   };
 
   const handleDeleteThread = async () => {
     if (!threadToDelete || !user.token) return;
-    const titleToDelete = threadToDelete.title;
-    const idToDelete = threadToDelete.thread_id;
-
-    toast({ title: `Deleting thread "${titleToDelete}"...` });
     try {
-      const result = await deleteChatThreadAction(user.token, idToDelete);
-      if (result.success) {
-        toast({ title: "Thread Deleted", description: `"${titleToDelete}" has been deleted.` });
-        if (currentThreadId === idToDelete) {
-          setCurrentThreadId(null);
-          localStorage.removeItem('aiTutorThreadId');
-          setMessages([{id: 'deleted-thread-msg', sender: 'ai', text: "Current chat session was deleted. Start a new one or load another.", timestamp: new Date()}]);
-          onClearDocumentContext(); 
-        }
-        await fetchThreads(); 
-      } else {
-        throw new Error(result.error || "Failed to delete thread.");
+      await deleteChatThreadAction(user.token, threadToDelete.thread_id);
+      toast({ title: "Thread Deleted" });
+      if (currentThreadId === threadToDelete.thread_id) {
+        setCurrentThreadId(null); localStorage.removeItem('aiTutorThreadId');
+        setMessages([{id: 'deleted-active-thread', sender: 'ai', text: "Current chat deleted. Start new or load another.", timestamp: new Date()}]);
+        onClearDocumentContext();
       }
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "Deletion Failed", description: error.message });
-    }
+      await fetchThreads();
+    } catch (error: any) { toast({ variant: "destructive", title: "Deletion Failed", description: error.message }); }
     setThreadToDelete(null);
   };
 
   const startRecording = async () => {
     if (!isMediaRecorderSupported || !user.token) {
-      toast({title: "Voice input not available or not logged in.", variant: "destructive"});
-      return;
+      toast({title: "Voice input unavailable/not logged in.", variant: "destructive"}); return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
       mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
-      };
-
+      mediaRecorderRef.current.ondataavailable = (event) => audioChunksRef.current.push(event.data);
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); 
-        
-        // Stop media tracks after blob creation
-        if (audioStreamRef.current) {
-          audioStreamRef.current.getTracks().forEach(track => track.stop());
-          audioStreamRef.current = null;
-=======
-        const currentStream = mediaRecorderRef.current?.stream;
+        if (audioStreamRef.current) { audioStreamRef.current.getTracks().forEach(track => track.stop()); audioStreamRef.current = null; }
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        
-        // Ensure all tracks are stopped AFTER blob creation
-        if (currentStream) {
-          currentStream.getTracks().forEach(track => track.stop());
->>>>>>> parent of ac40090 (#mimd map connection)
-=======
-        const currentStream = mediaRecorderRef.current?.stream;
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        
-        // Ensure all tracks are stopped AFTER blob creation
-        if (currentStream) {
-          currentStream.getTracks().forEach(track => track.stop());
->>>>>>> parent of ac40090 (#mimd map connection)
-        }
-        mediaRecorderRef.current = null; 
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-        setIsLoading(true); 
-        setChatStatusText("Transcribing audio...");
-        setIsRecording(false); 
-
+        setIsLoading(true); setChatStatusText("Transcribing..."); setIsRecording(false);
         if (audioBlob.size === 0) {
-            toast({title: "No audio recorded.", variant: "default"});
-            setIsLoading(false);
-            setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
-            return;
+            toast({title: "No audio."}); setIsLoading(false); setChatStatusText(documentOriginalName ? `Context: ${documentOriginalName.substring(0,20)}...` : "General Chat"); return;
         }
-        
-        toast({title: "Transcribing audio..."});
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'user_audio.webm');
-
+        const formData = new FormData(); formData.append('audio', audioBlob, 'user_audio.webm');
         try {
-            if (!user.token) throw new Error("User token not found for transcription.");
+            if (!user.token) throw new Error("Auth token missing.");
             const result = await transcribeAudioAction(user.token, formData);
-            if (result.text) {
-                setInputValue(prev => (prev ? prev + " " : "") + result.text);
-                toast({title: "Transcription complete."});
-            } else if (result.error) {
-                throw new Error(result.error);
-            } else {
-                toast({title: "Empty transcription received.", variant: "default"});
-            }
-        } catch (transcriptionError: any) {
-            toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
-        } finally {
-            setIsLoading(false);
-            setIsRecording(false); // Ensure this is set here
-            mediaRecorderRef.current = null; // Also clear here
-            const displayDocNameRecFin = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-            setChatStatusText(displayDocNameRecFin ? `Chatting about: ${displayDocNameRecFin}` : "General Chat Mode");
-        }
+            if (result.text) setInputValue(prev => (prev ? prev + " " : "") + result.text);
+            else if (result.error) throw new Error(result.error);
+        } catch (transErr: any) { toast({title: "Transcription Failed", description: transErr.message, variant: "destructive"});
+        } finally { setIsLoading(false); setChatStatusText(documentOriginalName ? `Context: ${documentOriginalName.substring(0,20)}...` : "General Chat"); }
       };
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      setChatStatusText("Recording audio...");
+      mediaRecorderRef.current.start(); setIsRecording(true); setChatStatusText("Recording...");
     } catch (err: any) {
-      console.error("Error starting recording:", err);
-      toast({title: "Microphone Error", description: `Could not access microphone: ${err.message}`, variant: "destructive"});
-      if (audioStreamRef.current) { 
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
-        audioStreamRef.current = null;
-      }
-      setIsRecording(false); // Reset recording state on error
-      mediaRecorderRef.current = null; // Clear recorder instance on error
-      const displayDocNameRecErr = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-      setChatStatusText(displayDocNameRecErr ? `Chatting about: ${displayDocNameRecErr}` : "General Chat Mode");
+      toast({title: "Mic Error", description: err.message, variant: "destructive"});
+      if (audioStreamRef.current) { audioStreamRef.current.getTracks().forEach(track => track.stop()); audioStreamRef.current = null; }
+      setIsRecording(false); mediaRecorderRef.current = null;
+      setChatStatusText(documentOriginalName ? `Context: ${documentOriginalName.substring(0,20)}...` : "General Chat");
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      // onstop will handle setting isRecording to false and other UI updates
-    } else { // If somehow isRecording is false but stream/recorder exists
-        if (audioStreamRef.current) {
-            audioStreamRef.current.getTracks().forEach(track => track.stop());
-            audioStreamRef.current = null;
-        }
-        if (mediaRecorderRef.current) {
-            mediaRecorderRef.current = null;
-        }
-        setIsRecording(false);
-        const displayDocNameStopRec = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
-        setChatStatusText(displayDocNameStopRec ? `Chatting about: ${displayDocNameStopRec}` : "General Chat Mode");
+    if (mediaRecorderRef.current && isRecording) mediaRecorderRef.current.stop();
+    else { // Failsafe cleanup
+        if (audioStreamRef.current) { audioStreamRef.current.getTracks().forEach(track => track.stop()); audioStreamRef.current = null; }
+        setIsRecording(false); mediaRecorderRef.current = null;
+        setChatStatusText(documentOriginalName ? `Context: ${documentOriginalName.substring(0,20)}...` : "General Chat");
     }
   };
 
   return (
-    <Card className="h-full flex flex-col glass-panel rounded-lg shadow-xl">
-      <CardHeader className="pb-2 border-b border-border/50">
+    <Card className="h-full flex flex-col glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border shadow-xl rounded-lg">
+      <CardHeader className="pb-2 border-b border-ai-engineer-border/50">
         <div className="flex justify-between items-center">
-          <CardTitle className="flex items-center text-xl font-headline">
-            <MessageSquare className="mr-2 h-6 w-6 text-primary" />
-            Chat Tutor
-            {currentThreadId && <span className="ml-2 text-xs text-muted-foreground">(Thread: {currentThreadId.substring(0,8)}...)</span>}
+          <CardTitle className="flex items-center text-xl font-headline text-ai-engineer-text-primary">
+            <MessageSquare className="mr-2 h-6 w-6 text-ai-engineer-accent-blue" />
+            AI Chat Tutor
+            {currentThreadId && <span className="ml-2 text-xs text-ai-engineer-text-muted">(Thread: {currentThreadId.substring(0,8)}...)</span>}
           </CardTitle>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleNewChat} title="Start a new chat session" disabled={!user.token || isLoading}>
+            <Button variant="outline" size="sm" onClick={handleNewChat} title="Start new chat" disabled={!user.token || isLoading} className="border-ai-engineer-accent-blue text-ai-engineer-accent-blue hover:bg-ai-engineer-accent-blue/10">
               <Files className="mr-1 h-4 w-4" /> New Chat
             </Button>
             <Dialog open={isSessionsDialogOpen} onOpenChange={setIsSessionsDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" onClick={handleShowSessions} title="View previous chat sessions" disabled={!user.token || isLoading}>
+                <Button variant="outline" size="sm" onClick={handleShowSessions} title="Previous sessions" disabled={!user.token || isLoading} className="border-ai-engineer-accent-teal text-ai-engineer-accent-teal hover:bg-ai-engineer-accent-teal/10">
                   <History className="mr-1 h-4 w-4" /> Sessions
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-md md:max-w-lg lg:max-w-xl glass-panel">
+              <DialogContent className="sm:max-w-md md:max-w-lg glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border text-ai-engineer-text-primary">
                 <DialogHeader>
-                  <DialogTitle>Previous Chat Sessions</DialogTitle>
-                  <DialogDescription>Select a session to load its history. You can also rename or delete sessions.</DialogDescription>
+                  <DialogTitle className="text-ai-engineer-accent-teal">Previous Chat Sessions</DialogTitle>
+                  <DialogDescription className="text-ai-engineer-text-secondary">Load, rename, or delete sessions.</DialogDescription>
                 </DialogHeader>
-                <div className="max-h-[60vh] overflow-y-auto pr-2 space-y-2">
-                  {isLoadingThreads ? (
-                    <div className="flex justify-center items-center p-4">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <span className="ml-2">Loading sessions...</span>
-                    </div>
-                  ) : availableThreads.length > 0 ? (
-                    availableThreads.map((thread) => (
-                      <div key={thread.thread_id} className="flex items-center justify-between p-2 rounded hover:bg-muted/50">
-                        {threadToRename?.thread_id === thread.thread_id ? (
-                           <div className="flex-grow flex items-center gap-2">
-                               <Input
-                                 defaultValue={thread.title}
-                                 onChange={(e) => setNewThreadTitle(e.target.value)}
-                                 className="h-8 text-sm flex-grow"
-                                 autoFocus
-                                 onKeyDown={(e) => {if(e.key === 'Enter') handleRenameThread()}}
-                                />
-                               <Button size="icon" variant="ghost" className="h-7 w-7 text-green-500 shrink-0" onClick={handleRenameThread} title="Confirm Rename"><Check className="h-4 w-4"/></Button>
-                               <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 shrink-0" onClick={() => setThreadToRename(null)} title="Cancel Rename"><XCircle className="h-4 w-4"/></Button>
-                           </div>
-                        ) : (
-                          <>
-                            <Button
-                                variant="ghost"
-                                className="flex-grow justify-start text-left h-auto py-1 px-2"
-                                onClick={() => loadChatHistory(thread.thread_id)}
-                            >
-                                <div className="flex flex-col">
-                                <span className="font-medium text-sm truncate max-w-[200px] sm:max-w-[250px] md:max-w-[300px]">{thread.title || `Session ${thread.thread_id.substring(0,8)}`}</span>
-                                <span className="text-xs text-muted-foreground">
-                                    Updated: {new Date(thread.last_updated).toLocaleString()}
-                                </span>
-                                </div>
-                            </Button>
-                            <div className="flex items-center gap-1 shrink-0">
-                                <Button size="icon" variant="ghost" className="h-7 w-7" title="Rename" onClick={() => {setThreadToRename(thread); setNewThreadTitle(thread.title);}}>
-                                    <Edit3 size={14} />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" title="Delete" onClick={() => setThreadToDelete(thread)}>
-                                    <Trash2 size={14} />
-                                </Button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-muted-foreground text-center py-4">No previous sessions found.</p>
-                  )}
+                <div className="max-h-[60vh] overflow-y-auto pr-2 space-y-2 scrollbar-thin">
+                  {isLoadingThreads ? <div className="flex justify-center p-4"><Loader2 className="h-6 w-6 animate-spin text-ai-engineer-accent-teal" /></div> : 
+                   availableThreads.length > 0 ? availableThreads.map((thread) => (
+                    <div key={thread.thread_id} className="flex items-center justify-between p-2 rounded hover:bg-ai-engineer-input-bg/50">
+                      {threadToRename?.thread_id === thread.thread_id ? (
+                         <div className="flex-grow flex items-center gap-1">
+                             <Input defaultValue={thread.title} onChange={(e) => setNewThreadTitle(e.target.value)} className="h-8 text-sm flex-grow bg-ai-engineer-input-bg" autoFocus onKeyDown={(e) => {if(e.key === 'Enter') handleRenameThread()}}/>
+                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={handleRenameThread} title="Save"><Check className="h-4 w-4 text-green-500"/></Button>
+                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => setThreadToRename(null)} title="Cancel"><XCircle className="h-4 w-4 text-red-500"/></Button>
+                         </div>
+                      ) : ( <>
+                          <Button variant="ghost" className="flex-grow justify-start text-left h-auto py-1 px-2" onClick={() => loadChatHistory(thread.thread_id)}>
+                              <div className="flex flex-col"><span className="font-medium text-sm truncate max-w-[180px] sm:max-w-[230px] md:max-w-[280px]">{thread.title || `Thread ${thread.thread_id.substring(0,8)}`}</span><span className="text-xs text-ai-engineer-text-muted">Updated: {new Date(thread.last_updated).toLocaleString()}</span></div>
+                          </Button>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                              <Button size="icon" variant="ghost" className="h-7 w-7" title="Rename" onClick={() => {setThreadToRename(thread); setNewThreadTitle(thread.title);}}><Edit3 size={14} className="text-ai-engineer-text-secondary"/></Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" title="Delete" onClick={() => setThreadToDelete(thread)}><Trash2 size={14} className="text-destructive"/></Button>
+                          </div></>)
+                      }</div>
+                  )) : <p className="text-ai-engineer-text-muted text-center py-4">No sessions.</p>}
                 </div>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button type="button" variant="outline">Close</Button>
-                  </DialogClose>
-                </DialogFooter>
+                <DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="border-ai-engineer-border hover:bg-ai-engineer-border">Close</Button></DialogClose></DialogFooter>
               </DialogContent>
             </Dialog>
           </div>
         </div>
       </CardHeader>
       <CardContent className="flex-grow overflow-hidden p-0 flex flex-col">
-        <ScrollArea className="flex-grow p-4" ref={scrollAreaRef}>
-          {messages.map((msg) => (
-            <ChatMessage
-              key={msg.id}
-              message={msg}
-              onEdit={handleEditMessage}
-              onCopy={handleCopyMessage}
-              onFeedback={handleFeedback}
-            />
-          ))}
-          {thinkingMessage && isLoading && (
-             <div className="flex items-center justify-start my-4 ml-11"> {/* Adjusted margin for bot-like alignment */}
-                <Loader2 className="h-5 w-5 text-primary animate-spin mr-2" />
-                <p className="text-sm text-muted-foreground p-3 bg-muted/70 rounded-lg shadow-md glass-panel !bg-card/50">{thinkingMessage}</p>
-            </div>
-          )}
+        <ScrollArea className="flex-grow p-4 scrollbar-thin" ref={scrollAreaRef}>
+          {messages.map((msg) => (<ChatMessage key={msg.id} message={msg} onEdit={handleEditMessage} onCopy={handleCopyMessage} onFeedback={handleFeedback} />))}
+          {isLoading && messages.every(m => !m.isLoading) && /* Show general thinking if no message is actively streaming */
+             <div className="flex items-center justify-start my-4 ml-11"><Loader2 className="h-5 w-5 text-ai-engineer-accent-blue animate-spin mr-2" /><p className="text-sm text-ai-engineer-text-muted p-2 bg-ai-engineer-message-bot rounded-lg">AI is thinking...</p></div>
+          }
         </ScrollArea>
       </CardContent>
-      <CardFooter className="p-4 border-t border-border/50 flex-col space-y-2">
-        <p className="text-xs text-muted-foreground w-full text-center">{chatStatusText}</p>
+      <CardFooter className="p-3 border-t border-ai-engineer-border/50 flex-col space-y-1.5">
+        <p className="text-xs text-ai-engineer-text-muted w-full text-center">{chatStatusText}</p>
         <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-2">
-          <Button
-            variant="outline"
-            size="icon"
-            type="button"
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading || !isMediaRecorderSupported || !user.token}
-            title={!user.token ? "Login to use voice" : (isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported")}
-            className={isRecording ? "text-destructive border-destructive animate-pulse" : ""}
-          >
-            <Mic className="h-4 w-4" /> <span className="sr-only">Voice Input</span>
-          </Button>
-          <Input
-            type="text"
-            placeholder={documentName ? `Ask Gemini about ${uploadedDocs.find(d => d.securedName === documentName)?.name || "the document"}...` : "Ask Gemini a general question..."}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            className="flex-1"
-            disabled={isLoading || !user.token || isRecording} 
-          />
-          <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null || isRecording} onClick={handleStopStream} title="Stop AI Response">
-            <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>
-          </Button>
-          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token || isRecording} className="btn-glow-primary-hover">
-            {isLoading && !isRecording ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
-            <span className="sr-only">Send</span>
-          </Button>
+          <Button variant="outline" size="icon" type="button" onClick={isRecording ? stopRecording : startRecording} disabled={isLoading || !isMediaRecorderSupported || !user.token} title={!user.token ? "Login for voice" : (isMediaRecorderSupported ? (isRecording ? "Stop" : "Record") : "Voice N/A")} className={isRecording ? "text-destructive border-destructive animate-pulse" : "border-ai-engineer-border hover:bg-ai-engineer-border"}> <Mic className="h-4 w-4" /> </Button>
+          <Input type="text" placeholder={documentOriginalName ? `Ask about ${documentOriginalName.substring(0,20)}...` : "Ask a general question..."} value={inputValue} onChange={(e) => setInputValue(e.target.value)} className="flex-1 bg-ai-engineer-input-bg text-ai-engineer-text-primary placeholder:text-ai-engineer-text-muted" disabled={isLoading || !user.token || isRecording} onKeyDown={(e) => {if(e.key === 'Enter' && !e.shiftKey) {e.preventDefault(); handleSendMessage();}}}/>
+          <Button variant="outline" size="icon" type="button" disabled={!isLoading || isRecording} onClick={handleStopStream} title="Stop AI Response" className="border-ai-engineer-border hover:bg-ai-engineer-border"> <StopCircle className="h-4 w-4" /> </Button>
+          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token || isRecording} className="bg-ai-engineer-accent-blue hover:bg-ai-engineer-accent-blue/90 text-primary-foreground btn-glow-primary-hover"> {isLoading && !isRecording ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />} </Button>
         </form>
       </CardFooter>
-
       {threadToDelete && (
         <AlertDialog open={!!threadToDelete} onOpenChange={(open) => !open && setThreadToDelete(null)}>
-            <AlertDialogContent className="glass-panel">
-            <AlertDHeader>
-                <AlertDTitle>Confirm Delete Session</AlertDTitle>
-                <AlertDialogDescription>
-                Are you sure you want to delete the chat session "{threadToDelete.title || `Session ${threadToDelete.thread_id.substring(0,8)}`}"? This action cannot be undone.
-                </AlertDialogDescription>
-            </AlertDHeader>
-            <AlertDFooter>
-                <AlertDialogCancel onClick={() => setThreadToDelete(null)}>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDeleteThread} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                Delete
-                </AlertDialogAction>
-            </AlertDFooter>
+            <AlertDialogContent className="glass-panel !bg-ai-engineer-card-bg border-ai-engineer-border text-ai-engineer-text-primary">
+            <AlertDHeader><AlertDTitle className="text-ai-engineer-accent-blue">Confirm Delete Session</AlertDTitle><AlertDialogDescription className="text-ai-engineer-text-secondary">Delete "{threadToDelete.title || `Session ${threadToDelete.thread_id.substring(0,8)}`}"? This cannot be undone.</AlertDialogDescription></AlertDHeader>
+            <AlertDFooter><AlertDialogCancel className="bg-muted text-muted-foreground hover:bg-muted/80">Cancel</AlertDialogCancel><AlertDialogAction onClick={handleDeleteThread} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction></AlertDFooter>
             </AlertDialogContent>
         </AlertDialog>
       )}
