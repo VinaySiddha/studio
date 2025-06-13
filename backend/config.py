@@ -1,3 +1,4 @@
+
 import os
 from dotenv import load_dotenv
 import logging
@@ -78,6 +79,7 @@ ANALYSIS_MAX_CONTEXT_LENGTH = int(os.getenv('ANALYSIS_MAX_CONTEXT_LENGTH', 10000
 
 # Chat & History Configuration
 SUMMARY_BUFFER_TOKEN_LIMIT = int(os.getenv('SUMMARY_BUFFER_TOKEN_LIMIT', 800))
+GENERAL_QUERY_PLACEHOLDER = "No document provided for context." # Placeholder for general queries
 
 
 # Logging Configuration
@@ -337,5 +339,8 @@ def setup_logging():
     logger.debug(f"RAG_CHUNK_K={RAG_CHUNK_K}, RAG_SEARCH_K_PER_QUERY={RAG_SEARCH_K_PER_QUERY}, MULTI_QUERY_COUNT={MULTI_QUERY_COUNT}")
     logger.debug(f"ANALYSIS_MAX_CONTEXT_LENGTH={ANALYSIS_MAX_CONTEXT_LENGTH}")
     logger.debug(f"SUMMARY_BUFFER_TOKEN_LIMIT={SUMMARY_BUFFER_TOKEN_LIMIT}")
+    logger.debug(f"GENERAL_QUERY_PLACEHOLDER='{GENERAL_QUERY_PLACEHOLDER}'")
     logger.debug(f"NOUGAT_MODEL_TAG={NOUGAT_MODEL_TAG}")
     logger.debug(f"NOUGAT_CHECKPOINT_PATH={NOUGAT_CHECKPOINT_PATH}")
+
+    
