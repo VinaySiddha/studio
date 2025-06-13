@@ -23,7 +23,11 @@ import type { User } from '@/app/page';
 
 interface ChatTutorSectionProps {
 <<<<<<< HEAD
+<<<<<<< HEAD
   documentName: string | null; // This will be the SECURED name for API calls or null for general chat
+=======
+  documentName: string | null; // This will be the securedName if a document is selected for context
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
   documentName: string | null; // This will be the securedName if a document is selected for context
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -51,7 +55,10 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 <<<<<<< HEAD
+<<<<<<< HEAD
   const audioStreamRef = useRef<MediaStream | null>(null);
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
 >>>>>>> parent of ac40090 (#mimd map connection)
 
@@ -98,16 +105,22 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       }]);
     }
 <<<<<<< HEAD
+<<<<<<< HEAD
     // This effect updates status text based on documentName (which reflects chat mode)
     const displayDocName = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
     setChatStatusText(displayDocName ? `Chatting about: ${displayDocName}` : "General Chat Mode");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentName, user.token]); // Only re-run if documentName (context) or user token changes
 =======
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
     // Chat status text is now primarily managed by AppContent via documentName prop
     setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentName, user.token]); // documentName now correctly influences initial message
+<<<<<<< HEAD
+>>>>>>> parent of ac40090 (#mimd map connection)
+=======
 >>>>>>> parent of ac40090 (#mimd map connection)
 
   // Separate useEffect for scrolling, depends only on messages and thinkingMessage
@@ -212,10 +225,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       const requestBody = {
         query: query,
 <<<<<<< HEAD
+<<<<<<< HEAD
         documentContent: documentName || GENERAL_QUERY_PLACEHOLDER, 
         threadId: currentThreadId || undefined,
         // No authToken here, /api/chat with Genkit doesn't need it for this specific purpose
 =======
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
         documentContent: documentName || "No document provided for context.", // documentName here is the securedName
         threadId: currentThreadId || undefined, 
         authToken: user.token,
@@ -298,6 +314,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
               setIsLoading(false);
               setThinkingMessage(null);
               setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
+<<<<<<< HEAD
+>>>>>>> parent of ac40090 (#mimd map connection)
+=======
 >>>>>>> parent of ac40090 (#mimd map connection)
             } else if (data.type === 'error') {
               const errorMessageContent = (data.error && typeof data.error === 'string') ? data.error : ((data.message && typeof data.message === 'string') ? data.message : 'Stream error from server.');
@@ -323,7 +342,11 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           msg.id === currentAiMessageId ? {
             ...msg,
 <<<<<<< HEAD
+<<<<<<< HEAD
             text: currentAiMessageText || `Sorry, I encountered an error: ${errorMessage}`,
+=======
+            text: (msg.text === "..." ? "" : m.text) || `Sorry, I encountered an error: ${errorMessage}`,
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
             text: (msg.text === "..." ? "" : m.text) || `Sorry, I encountered an error: ${errorMessage}`,
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -337,11 +360,16 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setIsLoading(false);
       setThinkingMessage(null);
 <<<<<<< HEAD
+<<<<<<< HEAD
       setMessages(prev => prev.map(m => 
         m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m
       ));
       const displayDocNameFinally = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
       setChatStatusText(displayDocNameFinally ? `Chatting about: ${displayDocNameFinally}` : "General Chat Mode");
+=======
+      setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m));
+      setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
       setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m));
       setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
@@ -400,9 +428,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setIsLoadingThreads(true);
     setIsSessionsDialogOpen(true);
 <<<<<<< HEAD
+<<<<<<< HEAD
     // Fetching threads might change if Genkit handles session history differently
     // For now, assume listChatThreadsAction is still relevant or adapt as needed
     await fetchThreads(true); 
+=======
+    await fetchThreads();
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
     await fetchThreads();
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -439,8 +471,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
 <<<<<<< HEAD
+<<<<<<< HEAD
       const displayDocNameLoadedHist = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
       setChatStatusText(displayDocNameLoadedHist ? `Chatting about: ${displayDocNameLoadedHist} (Thread: ${threadIdToLoad.substring(0,8)})` : `General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
+=======
+      setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
       setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -496,9 +532,15 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           localStorage.removeItem('aiTutorThreadId');
           setMessages([{id: 'deleted-thread-msg', sender: 'ai', text: "Current chat session was deleted. Start a new one or load another.", timestamp: new Date()}]);
 <<<<<<< HEAD
+<<<<<<< HEAD
           onClearDocumentContext(); 
         }
         await fetchThreads(); 
+=======
+          onClearDocumentContext();
+        }
+        await fetchThreads();
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
           onClearDocumentContext();
         }
@@ -529,6 +571,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
 
       mediaRecorderRef.current.onstop = async () => {
 <<<<<<< HEAD
+<<<<<<< HEAD
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); 
         
         if (audioStreamRef.current) {
@@ -542,9 +585,18 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         if (currentStream) {
           currentStream.getTracks().forEach(track => track.stop());
 >>>>>>> parent of ac40090 (#mimd map connection)
+=======
+        const currentStream = mediaRecorderRef.current?.stream;
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        
+        // Ensure all tracks are stopped AFTER blob creation
+        if (currentStream) {
+          currentStream.getTracks().forEach(track => track.stop());
+>>>>>>> parent of ac40090 (#mimd map connection)
         }
         // mediaRecorderRef.current = null; // This might be premature if onstop is re-entrant or error occurs later
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         setIsLoading(true); 
         setChatStatusText("Transcribing audio...");
@@ -612,6 +664,33 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                 setIsLoading(false);
             }
 >>>>>>> parent of ac40090 (#mimd map connection)
+=======
+        if (audioBlob.size === 0) {
+            toast({title: "No audio recorded.", variant: "default"}); // Use default variant
+        } else {
+            toast({title: "Transcribing audio..."});
+            setIsLoading(true); 
+            setChatStatusText("Transcribing audio...");
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'user_audio.webm');
+
+            try {
+                if (!user.token) throw new Error("User token not found for transcription.");
+                const result = await transcribeAudioAction(user.token, formData);
+                if (result.text) {
+                    setInputValue(prev => (prev ? prev + " " : "") + result.text);
+                    toast({title: "Transcription complete."});
+                } else if (result.error) {
+                    throw new Error(result.error);
+                } else {
+                    toast({title: "Empty transcription received.", variant: "default"});
+                }
+            } catch (transcriptionError: any) {
+                toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
+            } finally {
+                setIsLoading(false);
+            }
+>>>>>>> parent of ac40090 (#mimd map connection)
         }
         setIsRecording(false); 
         setChatStatusText(documentName ? `Context: Selected Document` : "General Chat Mode");
@@ -622,6 +701,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     } catch (err: any) {
       console.error("Error starting recording:", err);
       toast({title: "Microphone Error", description: `Could not access microphone: ${err.message}`, variant: "destructive"});
+<<<<<<< HEAD
 <<<<<<< HEAD
       if (audioStreamRef.current) { 
         audioStreamRef.current.getTracks().forEach(track => track.stop());
@@ -635,12 +715,17 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setChatStatusText("Mic access denied.");
       setIsRecording(false);
 >>>>>>> parent of ac40090 (#mimd map connection)
+=======
+      setChatStatusText("Mic access denied.");
+      setIsRecording(false);
+>>>>>>> parent of ac40090 (#mimd map connection)
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
+<<<<<<< HEAD
 <<<<<<< HEAD
       // onstop will handle setting isRecording to false and other UI updates
     } else { // If somehow isRecording is false but stream/recorder exists
@@ -654,6 +739,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         setIsRecording(false);
         const displayDocNameStopRec = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
         setChatStatusText(displayDocNameStopRec ? `Chatting about: ${displayDocNameStopRec}` : "General Chat Mode");
+=======
+      // onstop handler will set isRecording to false and clean up stream.
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
       // onstop handler will set isRecording to false and clean up stream.
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -781,7 +869,11 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           <Input
             type="text"
 <<<<<<< HEAD
+<<<<<<< HEAD
             placeholder={documentName ? `Ask Gemini about ${uploadedDocs.find(d => d.securedName === documentName)?.name || "the document"}...` : "Ask Gemini a general question..."}
+=======
+            placeholder={documentName ? `Ask about selected document...` : "Ask a general question..."}
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
             placeholder={documentName ? `Ask about selected document...` : "Ask a general question..."}
 >>>>>>> parent of ac40090 (#mimd map connection)

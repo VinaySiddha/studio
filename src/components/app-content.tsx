@@ -99,11 +99,17 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                  setAnalysisStatusText(`Selected: ${selectedDocOriginalName}. Ready for utilities or document chat.`);
             } else {
 <<<<<<< HEAD
+<<<<<<< HEAD
                  if (selectedDocSecuredName && !currentSelectedExists) {
                     setSelectedDocSecuredName(null); 
                     setSelectedDocOriginalName(null);
                     if (chatMode === 'document') setChatMode('general'); 
                  }
+=======
+                 setSelectedDocSecuredName(null); 
+                 setSelectedDocOriginalName(null);
+                 if (chatMode === 'document') setChatMode('general');
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
                  setSelectedDocSecuredName(null); 
                  setSelectedDocOriginalName(null);
@@ -174,7 +180,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setSelectedDocSecuredName(null);
       setSelectedDocOriginalName(null);
 <<<<<<< HEAD
+<<<<<<< HEAD
       if (securedNameToSelect === "" || securedNameToSelect === null || securedNameToSelect === "no-doc-placeholder") { 
+=======
+      if (securedNameToSelect === "" || securedNameToSelect === null) { // Handle explicit deselection or placeholder
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
       if (securedNameToSelect === "" || securedNameToSelect === null) { // Handle explicit deselection or placeholder
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -228,8 +238,13 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             setSelectedDocOriginalName(null);
             setChatMode('general'); 
 <<<<<<< HEAD
+<<<<<<< HEAD
             setAnalysisStatusText(uploadedDocs.length > 1 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
           } else if (uploadedDocs.length <= 1) { 
+=======
+            setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
+          } else if (updatedDocs.length === 0) {
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
             setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
           } else if (updatedDocs.length === 0) {
@@ -264,9 +279,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setUtilityResult(cachedItem);
       setIsModalOpen(true);
 <<<<<<< HEAD
+<<<<<<< HEAD
       if (cachedItem.action === 'mindmap' && cachedItem.content) {
         // Rendering is now handled by useEffect listening to isModalOpen and utilityResult
       }
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
 >>>>>>> parent of ac40090 (#mimd map connection)
       setAnalysisStatusText(`Showing cached ${action} for ${selectedDocOriginalName}.`);
@@ -327,6 +345,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 =======
           if (action === 'topics' && Array.isArray(resultData.topics)) {
             displayContent = resultData.topics.length > 0 ? resultData.topics.map(t => `- ${t}`).join('\n') : "No topics extracted.";
+<<<<<<< HEAD
+>>>>>>> parent of ac40090 (#mimd map connection)
+=======
 >>>>>>> parent of ac40090 (#mimd map connection)
           } else if (action === 'podcast') {
             displayContent = resultData.script || resultData.podcastScript || "No script returned.";
@@ -356,7 +377,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setUtilityResult(currentUtilityResult);
       setIsModalOpen(true);
 <<<<<<< HEAD
+<<<<<<< HEAD
       // Mindmap rendering is handled by useEffect based on isModalOpen & utilityResult
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
 >>>>>>> parent of ac40090 (#mimd map connection)
       setAnalysisStatusText(resultData.error ? `Error generating ${action}.` : `${action} for ${selectedDocOriginalName} received.`);
@@ -374,10 +398,13 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         action 
       };
 <<<<<<< HEAD
+<<<<<<< HEAD
       if(selectedDocSecuredName){
         setUtilityCache(prevCache => ({ ...prevCache, [selectedDocSecuredName]: { ...(prevCache[selectedDocSecuredName] || {}), [action]: errorResult, } }));
       }
 =======
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
       setUtilityCache(prevCache => ({ // Cache the error state too
         ...prevCache,
         [selectedDocSecuredName]: {
@@ -385,6 +412,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           [action]: errorResult,
         }
       }));
+<<<<<<< HEAD
+>>>>>>> parent of ac40090 (#mimd map connection)
+=======
 >>>>>>> parent of ac40090 (#mimd map connection)
       setUtilityResult(errorResult);
       setIsModalOpen(true);
@@ -393,6 +423,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   const renderMindmap = async (mermaidCode: string) => {
     if (mindMapContainerRef.current && (window as any).mermaid) {
@@ -439,6 +470,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   const documentContextForChat = chatMode === 'document' ? selectedDocOriginalName : null;
 =======
+=======
+>>>>>>> parent of ac40090 (#mimd map connection)
   const documentNameForChat = chatMode === 'document' ? selectedDocSecuredName : null;
   const displayDocumentNameForChatButton = chatMode === 'document' ? selectedDocOriginalName : null;
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -447,8 +480,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   return (
     <div className="flex flex-col flex-grow h-full overflow-hidden">
 <<<<<<< HEAD
+<<<<<<< HEAD
       <ApiKeyManager />
       <div className="my-4 flex justify-center items-center gap-2">
+=======
+      <div className="mb-6 flex justify-center items-center">
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
       <div className="mb-6 flex justify-center items-center">
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -493,7 +530,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
           <ChatTutorSection 
 <<<<<<< HEAD
+<<<<<<< HEAD
             documentName={chatMode === 'document' ? selectedDocSecuredName : null} // Pass secured name for API, or null
+=======
+            documentName={documentNameForChat} 
+>>>>>>> parent of ac40090 (#mimd map connection)
 =======
             documentName={documentNameForChat} 
 >>>>>>> parent of ac40090 (#mimd map connection)
@@ -517,6 +558,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                 {utilityResult.isProcessingError && <ServerCrash className="inline-block mr-2 h-5 w-5 text-destructive" />}
                 {utilityResult.title}
               </AlertDialogTitle>
+<<<<<<< HEAD
 <<<<<<< HEAD
               {utilityResult.action !== 'mindmap' && (
                 <AlertDialogDescription 
@@ -566,6 +608,23 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             
             {utilityResult.raw?.thinking && !utilityResult.isProcessingError && !utilityResult.error && (
 =======
+=======
+              <AlertDialogDescription 
+                className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
+              >
+                 {utilityResult.isProcessingError 
+                    ? <p className="text-destructive">{utilityResult.content}</p> 
+                    : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
+                  }
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
+                <div className="mt-2">
+                    <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
+                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
+                </div>
+            )}
+>>>>>>> parent of ac40090 (#mimd map connection)
             {utilityResult.raw?.thinking && !utilityResult.isProcessingError && (
 >>>>>>> parent of ac40090 (#mimd map connection)
               <details className="mt-2">
