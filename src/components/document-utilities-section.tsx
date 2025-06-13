@@ -16,7 +16,6 @@ interface DocumentUtilitiesSectionProps {
   analysisStatusText: string;
   isDocumentSelected: boolean;
   onDeleteDocument: (doc: DocumentFile) => void;
-  // Chat mode toggle is removed from here
 }
 
 const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
@@ -45,8 +44,8 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
           <label htmlFor="doc-util-select" className="block text-sm font-medium mb-1">Select Document:</label>
           <div className="flex gap-2">
             <Select 
-              onValueChange={onSelectDocument} 
-              value={selectedDocumentSecuredName} 
+              onValueChange={(value) => onSelectDocument(value === "no-doc-placeholder" ? "" : value)} 
+              value={selectedDocumentSecuredName || "no-doc-placeholder"} 
               disabled={documents.length === 0}
             >
               <SelectTrigger id="doc-util-select" className="w-full">
@@ -60,7 +59,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
                     </SelectItem>
                   ))
                 ) : (
-                  <SelectItem value="no-doc" disabled>No documents uploaded</SelectItem>
+                  <SelectItem value="no-doc-placeholder" disabled>No documents uploaded</SelectItem>
                 )}
               </SelectContent>
             </Select>
@@ -70,7 +69,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
                 size="icon"
                 onClick={() => onDeleteDocument(selectedDocument)}
                 title={`Delete ${selectedDocument.name}`}
-                className="shrink-0 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive-foreground btn-glow-primary-hover"
+                className="shrink-0 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive-foreground btn-glow-primary-hover" // Ensure destructive variant for icon button
               >
                 <Trash2 size={16} />
               </Button>
@@ -78,8 +77,6 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
           </div>
         </div>
         
-        {/* Chat Mode toggle has been moved to AppContent.tsx */}
-
         <div>
             <label className="block text-sm font-medium mb-1">Document Utilities:</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -113,7 +110,7 @@ const DocumentUtilitiesSection: FC<DocumentUtilitiesSectionProps> = ({
             <Button
                 onClick={() => onUtilityAction('podcast')}
                 disabled={!isDocumentSelected || isLoading.podcast}
-                className="w-full bg-accent text-accent-foreground hover:bg-accent/90 btn-glow-accent-hover"
+                className="w-full bg-accent text-accent-foreground hover:bg-accent/90 btn-glow-accent-hover" // Using accent for podcast
             >
                 {isLoading.podcast ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Podcast className="mr-2 h-4 w-4" />}
                 {isLoading.podcast ? 'Generating...' : 'Podcast'}

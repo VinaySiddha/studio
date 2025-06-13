@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, type FC, useEffect, useCallback } from 'react';
+import { useState, type FC, useEffect, useCallback, useRef } from 'react';
 import DocumentUploadSection from '@/components/document-upload-section';
 import DocumentUtilitiesSection from '@/components/document-utilities-section';
 import ChatTutorSection from '@/components/chat-tutor-section';
@@ -19,7 +19,8 @@ import {
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
 import { Button } from '@/components/ui/button';
-import { MessageCircle, BookOpen, ServerCrash } from 'lucide-react';
+import { MessageCircle, BookOpen, ServerCrash, Loader2 } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
 
 export interface DocumentFile {
   name: string; 
@@ -68,6 +69,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [chatMode, setChatMode] = useState<ChatMode>('general');
   const [docToDelete, setDocToDelete] = useState<DocumentFile | null>(null);
   const [utilityCache, setUtilityCache] = useState<UtilityCache>({});
+  const mindMapContainerRef = useRef<HTMLDivElement>(null);
+  const [isMindmapRendering, setIsMindmapRendering] = useState(false);
 
   const { toast } = useToast();
 
@@ -97,9 +100,13 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             if (currentSelectedExists && selectedDocOriginalName) {
                  setAnalysisStatusText(`Selected: ${selectedDocOriginalName}. Ready for utilities or document chat.`);
             } else {
-                 setSelectedDocSecuredName(null); 
-                 setSelectedDocOriginalName(null);
-                 if (chatMode === 'document') setChatMode('general');
+                 // If current selection is no longer valid, or was never set, clear it
+                 // and update status, but don't auto-switch chat mode unless necessary.
+                 if (selectedDocSecuredName && !currentSelectedExists) {
+                    setSelectedDocSecuredName(null); 
+                    setSelectedDocOriginalName(null);
+                    if (chatMode === 'document') setChatMode('general'); // Only switch if it was doc mode for a now-gone doc
+                 }
                  setAnalysisStatusText("Select a document for utilities or document-specific chat.");
             }
           }
@@ -159,12 +166,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setSelectedDocSecuredName(selected.securedName);
       setSelectedDocOriginalName(selected.name);
       setChatMode('document'); 
-      setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
+      setAnalysisStatusText(`Selected: ${selected.name}. Ready for utilities or document chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
     } else {
       setSelectedDocSecuredName(null);
       setSelectedDocOriginalName(null);
-      if (securedNameToSelect === "" || securedNameToSelect === null) { // Handle explicit deselection or placeholder
+      if (securedNameToSelect === "" || securedNameToSelect === null) { 
         setChatMode('general');
         setAnalysisStatusText("Document deselected. Switched to general chat mode.");
         toast({variant: "default", title: "Document Deselected", description: "Switched to general chat mode."})
@@ -200,10 +207,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         if (result.success) {
           toast({ title: "Document Deleted", description: `${docNameForToast} has been deleted.` });
           
-          const updatedDocs = uploadedDocs.filter(d => d.securedName !== securedNameForDeletion);
-          setUploadedDocs(updatedDocs);
+          setUploadedDocs(prevDocs => prevDocs.filter(d => d.securedName !== securedNameForDeletion));
 
-          // Remove from utility cache
           setUtilityCache(prevCache => {
             const newCache = {...prevCache};
             delete newCache[securedNameForDeletion];
@@ -214,8 +219,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
             setChatMode('general'); 
-            setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
-          } else if (updatedDocs.length === 0) {
+            setAnalysisStatusText(uploadedDocs.length > 1 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
+          } else if (uploadedDocs.length <= 1) { // If only one doc was there and it's deleted
             setChatMode('general');
             setAnalysisStatusText("All documents deleted. Upload a new document.");
           }
@@ -240,11 +245,13 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       return;
     }
 
-    // Check cache first
     const cachedItem = utilityCache[selectedDocSecuredName]?.[action];
     if (cachedItem) {
       setUtilityResult(cachedItem);
       setIsModalOpen(true);
+      if (cachedItem.action === 'mindmap' && cachedItem.content) {
+        setTimeout(() => renderMindmap(cachedItem.content), 0);
+      }
       setAnalysisStatusText(`Showing cached ${action} for ${selectedDocOriginalName}.`);
       toast({ title: "Showing Cached Utility", description: `${action} for ${selectedDocOriginalName} loaded from cache.` });
       return;
@@ -259,20 +266,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       const inputArgs = { documentName: selectedDocSecuredName, userToken: user.token }; 
 
       switch (action) {
-        case 'faq':
-          resultData = await generateFaq(inputArgs); 
-          break;
-        case 'topics':
-          resultData = await generateTopics(inputArgs);
-          break;
-        case 'mindmap':
-          resultData = await generateMindMap(inputArgs);
-          break;
-        case 'podcast':
-          resultData = await generatePodcastScript(inputArgs);
-          break;
-        default:
-          throw new Error("Unknown utility action");
+        case 'faq': resultData = await generateFaq(inputArgs); break;
+        case 'topics': resultData = await generateTopics(inputArgs); break;
+        case 'mindmap': resultData = await generateMindMap(inputArgs); break;
+        case 'podcast': resultData = await generatePodcastScript(inputArgs); break;
+        default: throw new Error("Unknown utility action");
       }
 
       let displayContent = "";
@@ -290,15 +288,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         toast({ variant: "destructive", title: `Error Generating ${action}`, description: isProcessingError ? `Document processing failed for ${selectedDocOriginalName}.` : errorMsg });
         currentUtilityResult = {
           title: `Error - ${action} for ${selectedDocOriginalName}`,
-          content: displayContent,
-          raw: resultData,
-          action,
-          error: resultData.error,
-          isProcessingError
+          content: displayContent, raw: resultData, action, error: resultData.error, isProcessingError
         };
       } else {
           if (action === 'topics' && Array.isArray(resultData.topics)) {
-            displayContent = resultData.topics.length > 0 ? resultData.topics.map(t => `- ${t}`).join('\n') : "No topics extracted.";
+            displayContent = resultData.topics.length > 0 ? resultData.topics.map((t:string) => `- ${t}`).join('\n') : "No topics extracted.";
           } else if (action === 'podcast') {
             displayContent = resultData.script || resultData.podcastScript || "No script returned.";
           } else { 
@@ -307,25 +301,20 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
           currentUtilityResult = {
             title: `${action.charAt(0).toUpperCase() + action.slice(1)} for ${selectedDocOriginalName}`,
-            content: displayContent,
-            raw: resultData,
-            action,
-            error: undefined,
-            isProcessingError: false,
+            content: displayContent, raw: resultData, action, error: undefined, isProcessingError: false,
           };
       }
       
-      // Store in cache
       setUtilityCache(prevCache => ({
         ...prevCache,
-        [selectedDocSecuredName]: {
-          ...(prevCache[selectedDocSecuredName] || {}),
-          [action]: currentUtilityResult,
-        }
+        [selectedDocSecuredName]: { ...(prevCache[selectedDocSecuredName] || {}), [action]: currentUtilityResult, }
       }));
 
       setUtilityResult(currentUtilityResult);
       setIsModalOpen(true);
+      if (action === 'mindmap' && currentUtilityResult.content && !currentUtilityResult.error) {
+        setTimeout(() => renderMindmap(currentUtilityResult.content), 0);
+      }
       setAnalysisStatusText(resultData.error ? `Error generating ${action}.` : `${action} for ${selectedDocOriginalName} received.`);
 
     } catch (error: any) {
@@ -334,19 +323,10 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
       const errorResult: CachedUtilityResult = { 
-        title: `Error - ${action} for ${selectedDocOriginalName}`, 
-        content: `Failed to generate ${action}. Error: ${errorMsg}`, 
-        error: errorMsg, 
-        raw: { error: errorMsg }, 
-        action 
+        title: `Error - ${action} for ${selectedDocOriginalName}`, content: `Failed to generate ${action}. Error: ${errorMsg}`, 
+        error: errorMsg, raw: { error: errorMsg }, action 
       };
-      setUtilityCache(prevCache => ({ // Cache the error state too
-        ...prevCache,
-        [selectedDocSecuredName]: {
-          ...(prevCache[selectedDocSecuredName] || {}),
-          [action]: errorResult,
-        }
-      }));
+      setUtilityCache(prevCache => ({ ...prevCache, [selectedDocSecuredName]: { ...(prevCache[selectedDocSecuredName] || {}), [action]: errorResult, } }));
       setUtilityResult(errorResult);
       setIsModalOpen(true);
     } finally {
@@ -354,13 +334,57 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
     }
   };
 
+  const renderMindmap = async (mermaidCode: string) => {
+    if (mindMapContainerRef.current && (window as any).mermaid) {
+      setIsMindmapRendering(true);
+      mindMapContainerRef.current.innerHTML = ''; // Clear previous
+      const mermaidDiv = document.createElement('div');
+      mermaidDiv.className = 'mermaid';
+      
+      // Basic cleaning of Mermaid code that might come from LLM
+      let cleanedCode = mermaidCode.trim();
+      if (cleanedCode.startsWith("```mermaid")) {
+        cleanedCode = cleanedCode.substring("```mermaid".length).trim();
+      }
+      if (cleanedCode.endsWith("```")) {
+        cleanedCode = cleanedCode.substring(0, cleanedCode.length - "```".length).trim();
+      }
+      if (!cleanedCode.toLowerCase().startsWith("mindmap")) {
+          cleanedCode = "mindmap\n" + cleanedCode;
+      }
+
+      mermaidDiv.textContent = cleanedCode;
+      mindMapContainerRef.current.appendChild(mermaidDiv);
+      try {
+        await (window as any).mermaid.run({ nodes: [mermaidDiv] });
+      } catch (e: any) {
+        console.error("Mermaid rendering error:", e);
+        mindMapContainerRef.current.innerHTML = `<p class="text-destructive">Error rendering mind map: ${e.message || 'Unknown error'}. Please check console.</p><p class="text-xs text-muted-foreground mt-2">Ensure the generated content is valid Mermaid mindmap syntax.</p>`;
+      } finally {
+        setIsMindmapRendering(false);
+      }
+    } else {
+      console.warn("Mermaid container or library not ready.");
+      if(mindMapContainerRef.current) mindMapContainerRef.current.innerHTML = '<p class="text-warning">Mindmap rendering library not available or container error.</p>';
+      setIsMindmapRendering(false);
+    }
+  };
+  
+  useEffect(() => {
+    if (isModalOpen && utilityResult?.action === 'mindmap' && utilityResult.content && !utilityResult.error) {
+      renderMindmap(utilityResult.content);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, utilityResult]);
+
+
   const documentNameForChat = chatMode === 'document' ? selectedDocSecuredName : null;
   const displayDocumentNameForChatButton = chatMode === 'document' ? selectedDocOriginalName : null;
 
 
   return (
     <div className="flex flex-col flex-grow h-full overflow-hidden">
-      <div className="mb-6 flex justify-center items-center">
+      <div className="my-4 flex justify-center items-center">
         <Button 
             onClick={handleToggleChatMode} 
             variant="outline" 
@@ -380,6 +404,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             <p className="ml-3 text-xs text-muted-foreground">Select a document in "Document Hub" to enable document-specific chat.</p>
           )}
       </div>
+      <Separator className="mb-6" />
 
       <div className="flex flex-col lg:flex-row gap-8 flex-grow overflow-hidden">
         <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8 flex flex-col">
@@ -401,7 +426,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         </div>
         <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
           <ChatTutorSection 
-            documentName={documentNameForChat} 
+            documentName={documentNameForChat} // This is selectedDocSecuredName or null
             user={user}
             onClearDocumentContext={() => {
               setSelectedDocSecuredName(null);
@@ -422,21 +447,39 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
                 {utilityResult.isProcessingError && <ServerCrash className="inline-block mr-2 h-5 w-5 text-destructive" />}
                 {utilityResult.title}
               </AlertDialogTitle>
-              <AlertDialogDescription 
-                className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
-              >
-                 {utilityResult.isProcessingError 
-                    ? <p className="text-destructive">{utilityResult.content}</p> 
-                    : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
-                  }
-              </AlertDialogDescription>
+              {utilityResult.action !== 'mindmap' && (
+                <AlertDialogDescription 
+                  className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
+                >
+                   {utilityResult.isProcessingError 
+                      ? <p className="text-destructive">{utilityResult.content}</p> 
+                      : <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
+                    }
+                </AlertDialogDescription>
+              )}
             </AlertDialogHeader>
-            {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
-                <div className="mt-2">
-                    <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
+
+            {utilityResult.action === 'mindmap' && (
+              <div className="mt-2 max-h-[60vh] overflow-y-auto">
+                {isMindmapRendering && (
+                  <div className="flex items-center justify-center p-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <span className="ml-2">Rendering Mind Map...</span>
+                  </div>
+                )}
+                <div ref={mindMapContainerRef} className={isMindmapRendering ? 'hidden' : ''}>
+                  {/* Mermaid will render here or show error */}
+                  {utilityResult.error && <p className="text-destructive">{utilityResult.content}</p>}
                 </div>
+                {utilityResult.raw?.content && !utilityResult.error && (
+                  <details className="mt-2">
+                    <summary className="text-xs cursor-pointer text-muted-foreground">Show Mermaid Code</summary>
+                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
+                  </details>
+                )}
+              </div>
             )}
+            
             {utilityResult.raw?.thinking && !utilityResult.isProcessingError && (
               <details className="mt-2">
                 <summary className="text-xs cursor-pointer text-muted-foreground">Show Reasoning</summary>
@@ -486,5 +529,3 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 };
 
 export default AppContent;
-
-    

@@ -18,8 +18,10 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+        <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" async></script>
       </head>
       <body className="font-body antialiased">
+        <script dangerouslySetInnerHTML={{ __html: `mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });` }} />
         {children}
         <Toaster />
       </body>
