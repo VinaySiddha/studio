@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, type FC, useEffect } from 'react';
+import { useState, type FC, useEffect, useCallback } from 'react';
 import DocumentUploadSection from '@/components/document-upload-section';
 import DocumentUtilitiesSection from '@/components/document-utilities-section';
 import ChatTutorSection from '@/components/chat-tutor-section';
@@ -19,7 +19,7 @@ import {
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
 import { Button } from '@/components/ui/button';
-import { MessageCircle, BookOpen } from 'lucide-react';
+import { MessageCircle, BookOpen, ServerCrash } from 'lucide-react';
 
 export interface DocumentFile {
   name: string; 
@@ -41,7 +41,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState<string>("Select a document to upload.");
   
-  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string; raw?: any; action?: UtilityAction; error?: string } | null>(null);
+  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string; raw?: any; action?: UtilityAction; error?: string; isProcessingError?: boolean } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoadingUtility, setIsLoadingUtility] = useState<Record<UtilityAction, boolean>>({
     faq: false,
@@ -55,7 +55,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
   const { toast } = useToast();
 
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     if (user?.token) {
       setAnalysisStatusText("Loading documents...");
       try {
@@ -75,11 +75,17 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             if (chatMode === 'document') setChatMode('general');
           } else {
             setAnalysisStatusText("Select a document and utility type.");
-            // If currently selected doc was deleted, reset selection
             if (selectedDocSecuredName && !docs.find(d => d.securedName === selectedDocSecuredName)) {
                 setSelectedDocSecuredName(null); 
                 setSelectedDocOriginalName(null);
                 if (chatMode === 'document') setChatMode('general');
+            } else if (selectedDocSecuredName) {
+              // Keep current selection if still valid
+              const currentSelectedDoc = docs.find(d => d.securedName === selectedDocSecuredName);
+              if (currentSelectedDoc) {
+                setSelectedDocOriginalName(currentSelectedDoc.name); // Ensure original name is also up-to-date
+                setAnalysisStatusText(`Selected: ${currentSelectedDoc.name}. Ready for utilities or document chat.`);
+              }
             }
           }
         }
@@ -88,12 +94,12 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         setAnalysisStatusText(`Error: ${e.message}`);
       }
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.token, chatMode]); // Added chatMode to dependencies if it influences selection logic
 
   useEffect(() => {
     fetchDocuments();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.token]);
+  }, [user.token, fetchDocuments]);
 
 
   const handleDocumentUpload = async (file: File) => {
@@ -119,7 +125,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       
       await fetchDocuments(); 
 
-      // Auto-select the newly uploaded document and switch to document chat mode
       setSelectedDocSecuredName(result.filename); 
       setSelectedDocOriginalName(result.original_filename);
       setChatMode('document'); 
@@ -143,7 +148,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
     } else {
-      // This case might happen if the securedName is invalid or document list is out of sync
       setSelectedDocSecuredName(null);
       setSelectedDocOriginalName(null);
       setChatMode('general');
@@ -160,7 +164,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       } else {
         toast({ variant: "default", title: "Select Document for Document Chat", description: "Please select a document from the 'Document Hub' first to switch to document-specific chat mode." });
       }
-    } else { // chatMode === 'document'
+    } else { 
       setChatMode('general');
       toast({ title: "Chat Mode Switched", description: "Now in general chat mode." });
     }
@@ -174,12 +178,17 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         const result = await deleteDocumentAction(user.token, docToDelete.securedName);
         if (result.success) {
           toast({ title: "Document Deleted", description: `${docNameForToast} has been deleted.` });
-          setUploadedDocs(prev => prev.filter(d => d.securedName !== docToDelete.securedName));
+          
+          const updatedDocs = uploadedDocs.filter(d => d.securedName !== docToDelete.securedName);
+          setUploadedDocs(updatedDocs);
+
           if (selectedDocSecuredName === docToDelete.securedName) {
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
             setChatMode('general');
-            setAnalysisStatusText(uploadedDocs.length > 1 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
+            setAnalysisStatusText(updatedDocs.length > 0 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
+          } else if (updatedDocs.length === 0) {
+            setAnalysisStatusText("All documents deleted. Upload a new document.");
           }
         } else {
           throw new Error(result.error || "Failed to delete document from server.");
@@ -192,7 +201,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
 
   const handleUtilityAction = async (action: UtilityAction) => {
-    if (!selectedDocSecuredName || !selectedDocOriginalName) { // Ensure original name is also set
+    if (!selectedDocSecuredName || !selectedDocOriginalName) {
       setAnalysisStatusText("Please select a document first.");
       toast({ variant: "destructive", title: "No Document Selected", description: "Please select a document for utilities." });
       return;
@@ -227,28 +236,42 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           throw new Error("Unknown utility action");
       }
 
-      if (resultData.error) throw new Error(resultData.error);
-      
-      // Process content based on action type
       let displayContent = "";
-      if (action === 'topics' && Array.isArray(resultData.topics)) {
-        displayContent = resultData.topics.join('\n- ');
-        if (resultData.topics.length > 0) displayContent = "- " + displayContent;
-      } else if (action === 'podcast') {
-        displayContent = resultData.script || resultData.podcastScript || "No script returned.";
+      let isProcessingError = false;
+      if (resultData.error) {
+        // Check if the error indicates a document processing issue from the backend
+        if (resultData.error.includes("Failed to retrieve or process text content")) {
+          displayContent = `Could not perform '${action}' on "${selectedDocOriginalName}". The server failed to process the document's content. Please try with a different document or check the file.`;
+          isProcessingError = true;
+        } else {
+          displayContent = `An error occurred while generating ${action}: ${resultData.error}`;
+        }
       } else {
-        displayContent = resultData.content || resultData.faqList || resultData.mindMap || "No content returned.";
+          if (action === 'topics' && Array.isArray(resultData.topics)) {
+            displayContent = resultData.topics.length > 0 ? "- " + resultData.topics.join('\n- ') : "No topics extracted.";
+          } else if (action === 'podcast') {
+            displayContent = resultData.script || resultData.podcastScript || "No script returned.";
+          } else {
+            displayContent = resultData.content || resultData.faqList || resultData.mindMap || "No content returned.";
+          }
       }
 
       setUtilityResult({ 
         title: `${action.charAt(0).toUpperCase() + action.slice(1)} for ${selectedDocOriginalName}`, 
         content: displayContent, 
         raw: resultData, 
-        action 
+        action,
+        error: resultData.error, // Store original error if any
+        isProcessingError 
       });
       setIsModalOpen(true);
-      setAnalysisStatusText(`${action} for ${selectedDocOriginalName} received.`);
-      toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
+      if (resultData.error) {
+        setAnalysisStatusText(`Error generating ${action}.`);
+        toast({ variant: "destructive", title: `Error Generating ${action}`, description: isProcessingError ? "Document processing failed on server." : resultData.error });
+      } else {
+        setAnalysisStatusText(`${action} for ${selectedDocOriginalName} received.`);
+        toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
+      }
 
     } catch (error: any) {
       console.error(`Error generating ${action} via Flask:`, error);
@@ -257,7 +280,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
       setUtilityResult({ 
         title: `Error - ${action} for ${selectedDocOriginalName}`, 
-        content: `Failed to generate ${action}. Please check backend logs for details.`, 
+        content: `Failed to generate ${action}. Error: ${errorMsg}`, 
         error: errorMsg, 
         raw: { error: errorMsg }, 
         action 
@@ -295,7 +318,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
       <div className="flex flex-col lg:flex-row gap-8 flex-grow overflow-hidden">
         <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8 flex flex-col">
-          {/* DocumentUploadSection is not designed to be flex-grow, it has fixed content */}
           <DocumentUploadSection 
             onDocumentUpload={handleDocumentUpload} 
             isUploading={isUploading}
@@ -313,7 +335,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           />
         </div>
         <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
-          {/* ChatTutorSection should grow */}
           <ChatTutorSection 
             documentName={documentNameForChat} 
             user={user}
@@ -332,29 +353,29 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
         <AlertDialog open={isModalOpen} onOpenChange={setIsModalOpen}>
           <AlertDialogContent className="max-w-2xl glass-panel">
             <AlertDialogHeader>
-              <AlertDialogTitle className="font-headline text-primary">{utilityResult.title}</AlertDialogTitle>
+              <AlertDialogTitle className="font-headline text-primary">
+                {utilityResult.isProcessingError && <ServerCrash className="inline-block mr-2 h-5 w-5 text-destructive" />}
+                {utilityResult.title}
+              </AlertDialogTitle>
               <AlertDialogDescription 
                 className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
-                // Using dangerouslySetInnerHTML for utility content if it contains Markdown
-                dangerouslySetInnerHTML={utilityResult.error ? undefined : { __html: utilityResult.content.replace(/\n/g, '<br />') }}
               >
-                {/* Fallback for error messages or non-HTML content */}
-                {utilityResult.error ? utilityResult.content : null}
+                <div dangerouslySetInnerHTML={{ __html: utilityResult.content.replace(/\n/g, '<br />') }} />
               </AlertDialogDescription>
             </AlertDialogHeader>
-            {utilityResult.action === 'mindmap' && utilityResult.content && !utilityResult.error && (
+            {utilityResult.action === 'mindmap' && utilityResult.raw?.content && !utilityResult.error && (
                 <div className="mt-2">
                     <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.content}</pre>
+                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.raw.content}</pre>
                 </div>
             )}
-            {utilityResult.raw?.thinking && (
+            {utilityResult.raw?.thinking && !utilityResult.isProcessingError && (
               <details className="mt-2">
                 <summary className="text-xs cursor-pointer text-muted-foreground">Show Reasoning</summary>
                 <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.thinking}</pre>
               </details>
             )}
-            {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && (
+            {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && !utilityResult.error && (
                 <details className="mt-2">
                     <summary className="text-xs cursor-pointer text-muted-foreground">Show Processed Source (Mindmap)</summary>
                     <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.latex_source}</pre>
@@ -397,3 +418,6 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 };
 
 export default AppContent;
+
+
+    
