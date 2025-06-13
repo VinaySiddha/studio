@@ -19,7 +19,7 @@ import {
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { User } from '@/app/page';
 import { Button } from '@/components/ui/button';
-import { ToggleLeft, ToggleRight, MessageCircle, BookOpen } from 'lucide-react';
+import { MessageCircle, BookOpen } from 'lucide-react';
 
 export interface DocumentFile {
   name: string; 
@@ -41,7 +41,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState<string>("Select a document to upload.");
   
-  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string; raw?: any; action?: UtilityAction } | null>(null);
+  const [utilityResult, setUtilityResult] = useState<{ title: string; content: string; raw?: any; action?: UtilityAction; error?: string } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoadingUtility, setIsLoadingUtility] = useState<Record<UtilityAction, boolean>>({
     faq: false,
@@ -75,6 +75,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             if (chatMode === 'document') setChatMode('general');
           } else {
             setAnalysisStatusText("Select a document and utility type.");
+            // If currently selected doc was deleted, reset selection
             if (selectedDocSecuredName && !docs.find(d => d.securedName === selectedDocSecuredName)) {
                 setSelectedDocSecuredName(null); 
                 setSelectedDocOriginalName(null);
@@ -118,9 +119,11 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       
       await fetchDocuments(); 
 
+      // Auto-select the newly uploaded document and switch to document chat mode
       setSelectedDocSecuredName(result.filename); 
       setSelectedDocOriginalName(result.original_filename);
       setChatMode('document'); 
+      setAnalysisStatusText(`Selected: ${result.original_filename}. Ready for utilities or document chat.`);
       
     } catch (error: any) {
       console.error("File upload error:", error);
@@ -139,18 +142,25 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       setChatMode('document'); 
       setAnalysisStatusText(`Selected: ${selected.name}. Choose a utility or chat.`);
       toast({ title: "Document Selected", description: `${selected.name} is now active for utilities and document-specific chat.` });
+    } else {
+      // This case might happen if the securedName is invalid or document list is out of sync
+      setSelectedDocSecuredName(null);
+      setSelectedDocOriginalName(null);
+      setChatMode('general');
+      setAnalysisStatusText("Document not found or deselected. Switched to general chat.");
+      toast({variant: "warning", title: "Document Deselected", description: "Switched to general chat mode."})
     }
   };
 
   const handleToggleChatMode = () => {
     if (chatMode === 'general') {
-      if (selectedDocSecuredName) {
+      if (selectedDocSecuredName && selectedDocOriginalName) {
         setChatMode('document');
         toast({ title: "Chat Mode Switched", description: `Now chatting about ${selectedDocOriginalName}.` });
       } else {
-        toast({ variant: "default", title: "Select Document for Document Chat", description: "Please select a document first to switch to document-specific chat mode." });
+        toast({ variant: "default", title: "Select Document for Document Chat", description: "Please select a document from the 'Document Hub' first to switch to document-specific chat mode." });
       }
-    } else {
+    } else { // chatMode === 'document'
       setChatMode('general');
       toast({ title: "Chat Mode Switched", description: "Now in general chat mode." });
     }
@@ -169,7 +179,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             setSelectedDocSecuredName(null);
             setSelectedDocOriginalName(null);
             setChatMode('general');
-            setAnalysisStatusText("Document deleted. Select another or upload.");
+            setAnalysisStatusText(uploadedDocs.length > 1 ? "Document deleted. Select another or upload." : "Document deleted. Upload a new document.");
           }
         } else {
           throw new Error(result.error || "Failed to delete document from server.");
@@ -182,9 +192,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
 
 
   const handleUtilityAction = async (action: UtilityAction) => {
-    if (!selectedDocSecuredName) {
+    if (!selectedDocSecuredName || !selectedDocOriginalName) { // Ensure original name is also set
       setAnalysisStatusText("Please select a document first.");
-      toast({ variant: "destructive", title: "No Document Selected", description: "Please select a document first." });
+      toast({ variant: "destructive", title: "No Document Selected", description: "Please select a document for utilities." });
       return;
     }
     if (!user?.token) {
@@ -203,32 +213,55 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
       switch (action) {
         case 'faq':
           resultData = await generateFaq(inputArgs); 
-          setUtilityResult({ title: `FAQ for ${selectedDocOriginalName}`, content: resultData.content || resultData.faqList || "No FAQ content returned.", raw: resultData, action });
           break;
         case 'topics':
           resultData = await generateTopics(inputArgs);
-          const topicsContent = Array.isArray(resultData.topics) ? resultData.topics.join('\n- ') : (resultData.content || "No topics returned.");
-          setUtilityResult({ title: `Key Topics for ${selectedDocOriginalName}`, content: topicsContent, raw: resultData, action });
           break;
         case 'mindmap':
           resultData = await generateMindMap(inputArgs);
-          setUtilityResult({ title: `Mind Map (Mermaid Code) for ${selectedDocOriginalName}`, content: resultData.content || resultData.mindMap || "No mind map content returned.", raw: resultData, action });
           break;
         case 'podcast':
           resultData = await generatePodcastScript(inputArgs);
-          setUtilityResult({ title: `Podcast Script for ${selectedDocOriginalName}`, content: resultData.script || "No script returned.", raw: resultData, action });
           break;
+        default:
+          throw new Error("Unknown utility action");
       }
+
       if (resultData.error) throw new Error(resultData.error);
+      
+      // Process content based on action type
+      let displayContent = "";
+      if (action === 'topics' && Array.isArray(resultData.topics)) {
+        displayContent = resultData.topics.join('\n- ');
+        if (resultData.topics.length > 0) displayContent = "- " + displayContent;
+      } else if (action === 'podcast') {
+        displayContent = resultData.script || resultData.podcastScript || "No script returned.";
+      } else {
+        displayContent = resultData.content || resultData.faqList || resultData.mindMap || "No content returned.";
+      }
+
+      setUtilityResult({ 
+        title: `${action.charAt(0).toUpperCase() + action.slice(1)} for ${selectedDocOriginalName}`, 
+        content: displayContent, 
+        raw: resultData, 
+        action 
+      });
       setIsModalOpen(true);
       setAnalysisStatusText(`${action} for ${selectedDocOriginalName} received.`);
       toast({ title: "Utility Generated", description: `${action} for ${selectedDocOriginalName} is ready.` });
+
     } catch (error: any) {
       console.error(`Error generating ${action} via Flask:`, error);
       const errorMsg = error.message || "An unexpected error occurred.";
       setAnalysisStatusText(`Error generating ${action}: ${errorMsg}`);
       toast({ variant: "destructive", title: `Error Generating ${action}`, description: errorMsg });
-      setUtilityResult({ title: `Error - ${action}`, content: `Failed to generate ${action}: ${errorMsg}`, raw: { error: errorMsg }, action});
+      setUtilityResult({ 
+        title: `Error - ${action} for ${selectedDocOriginalName}`, 
+        content: `Failed to generate ${action}. Please check backend logs for details.`, 
+        error: errorMsg, 
+        raw: { error: errorMsg }, 
+        action 
+      });
       setIsModalOpen(true);
     } finally {
       setIsLoadingUtility(prev => ({ ...prev, [action]: false }));
@@ -238,7 +271,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
   const documentNameForChat = chatMode === 'document' ? selectedDocOriginalName : null;
 
   return (
-    <>
+    <div className="flex flex-col flex-grow h-full overflow-hidden">
       <div className="mb-6 flex justify-center items-center">
         <Button 
             onClick={handleToggleChatMode} 
@@ -260,8 +293,9 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           )}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8">
-        <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8">
+      <div className="flex flex-col lg:flex-row gap-8 flex-grow overflow-hidden">
+        <div className="w-full lg:w-[35%] xl:w-[30%] space-y-8 flex flex-col">
+          {/* DocumentUploadSection is not designed to be flex-grow, it has fixed content */}
           <DocumentUploadSection 
             onDocumentUpload={handleDocumentUpload} 
             isUploading={isUploading}
@@ -278,7 +312,8 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
             onDeleteDocument={(doc) => setDocToDelete(doc)}
           />
         </div>
-        <div className="w-full lg:w-[65%] xl:w-[70%]">
+        <div className="w-full lg:w-[65%] xl:w-[70%] flex flex-col">
+          {/* ChatTutorSection should grow */}
           <ChatTutorSection 
             documentName={documentNameForChat} 
             user={user}
@@ -286,7 +321,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
               setSelectedDocSecuredName(null);
               setSelectedDocOriginalName(null);
               setChatMode('general'); 
-              setAnalysisStatusText("New chat started. Select a document for utilities or document-specific chat.");
+              setAnalysisStatusText(uploadedDocs.length > 0 ? "New chat started. Select a document for utilities or document-specific chat." : "New chat started. Upload a document to begin.");
             }}
           />
         </div>
@@ -298,30 +333,41 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           <AlertDialogContent className="max-w-2xl glass-panel">
             <AlertDialogHeader>
               <AlertDialogTitle className="font-headline text-primary">{utilityResult.title}</AlertDialogTitle>
-              <AlertDialogDescription className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap">
-                {utilityResult.content}
-                {utilityResult.raw?.thinking && (
-                  <details className="mt-2">
-                    <summary className="text-xs cursor-pointer text-muted-foreground">Show Reasoning</summary>
-                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{utilityResult.raw.thinking}</pre>
-                  </details>
-                )}
-                {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && (
-                    <details className="mt-2">
-                        <summary className="text-xs cursor-pointer text-muted-foreground">Show Processed Source (Mindmap)</summary>
-                        <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{utilityResult.raw.latex_source}</pre>
-                    </details>
-                )}
-                {utilityResult.raw?.audio_url && utilityResult.action === 'podcast' && (
-                    <div className="mt-4">
-                        <h4 className="text-sm font-medium text-foreground">Podcast Audio</h4>
-                        <audio controls src={utilityResult.raw.audio_url} className="w-full mt-1">
-                            Your browser does not support the audio element.
-                        </audio>
-                    </div>
-                )}
+              <AlertDialogDescription 
+                className="max-h-[60vh] overflow-y-auto text-sm text-foreground/80 whitespace-pre-wrap"
+                // Using dangerouslySetInnerHTML for utility content if it contains Markdown
+                dangerouslySetInnerHTML={utilityResult.error ? undefined : { __html: utilityResult.content.replace(/\n/g, '<br />') }}
+              >
+                {/* Fallback for error messages or non-HTML content */}
+                {utilityResult.error ? utilityResult.content : null}
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {utilityResult.action === 'mindmap' && utilityResult.content && !utilityResult.error && (
+                <div className="mt-2">
+                    <h4 className="text-sm font-medium text-foreground/90">Mermaid Code (for Mind Map):</h4>
+                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-auto">{utilityResult.content}</pre>
+                </div>
+            )}
+            {utilityResult.raw?.thinking && (
+              <details className="mt-2">
+                <summary className="text-xs cursor-pointer text-muted-foreground">Show Reasoning</summary>
+                <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.thinking}</pre>
+              </details>
+            )}
+            {utilityResult.raw?.latex_source && utilityResult.action === 'mindmap' && (
+                <details className="mt-2">
+                    <summary className="text-xs cursor-pointer text-muted-foreground">Show Processed Source (Mindmap)</summary>
+                    <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap max-h-32 overflow-auto">{utilityResult.raw.latex_source}</pre>
+                </details>
+            )}
+            {utilityResult.raw?.audio_url && utilityResult.action === 'podcast' && !utilityResult.error && (
+                <div className="mt-4">
+                    <h4 className="text-sm font-medium text-foreground">Podcast Audio</h4>
+                    <audio controls src={utilityResult.raw.audio_url} className="w-full mt-1">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+            )}
             <AlertDialogFooter>
               <AlertDialogAction onClick={() => setIsModalOpen(false)} className="btn-glow-primary-hover">Close</AlertDialogAction>
             </AlertDialogFooter>
@@ -346,7 +392,7 @@ const AppContent: FC<AppContentProps> = ({ user }) => {
           </AlertDialogContent>
         </AlertDialog>
       )}
-    </>
+    </div>
   );
 };
 

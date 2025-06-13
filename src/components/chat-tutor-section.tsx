@@ -6,8 +6,8 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import ChatMessage, { type Message as MessageType } from '@/components/chat-message';
-import { MessageSquare, SendHorizontal, Loader2, Mic, Pause, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react';
+import ChatMessage, { type Message as MessageType, type Reference } from '@/components/chat-message';
+import { MessageSquare, SendHorizontal, Loader2, Mic, StopCircle, Files, History, XCircle, Edit3, Trash2, Check } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDFooter, AlertDialogHeader as AlertDHeader, AlertDialogTitle as AlertDTitle } from '@/components/ui/alert-dialog';
@@ -30,7 +30,7 @@ interface ChatTutorSectionProps {
 interface Thread {
   thread_id: string;
   title: string;
-  last_updated: string;
+  last_updated: string; // Assuming ISO string
 }
 
 const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onClearDocumentContext }) => {
@@ -132,7 +132,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setThinkingMessage("AI is preparing your response...");
 
     abortControllerRef.current = new AbortController();
-    let currentAiMessageId = Date.now().toString() + '-ai';
+    const currentAiMessageId = Date.now().toString() + '-ai';
     let currentAiMessageText = '';
 
     setMessages((prev) => [...prev, {
@@ -147,7 +147,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       const requestBody = {
         query: query,
         documentContent: documentName || "No document provided for context.",
-        threadId: currentThreadId || undefined, // Send undefined if null
+        threadId: currentThreadId || undefined, 
         authToken: user.token,
       };
 
@@ -173,14 +173,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         const sseMessages = decoder.decode(value, { stream: true }).split('\n\n').filter(Boolean);
         for (const sseMessage of sseMessages) {
           if (sseMessage.startsWith('data: ')) {
+            const rawData = sseMessage.substring(6);
+            if (!rawData.trim()) {
+              console.warn("[ChatTutor] Received empty SSE data message from stream.");
+              continue;
+            }
             try {
-              const rawData = sseMessage.substring(6);
-              if (!rawData.trim()) {
-                console.warn("[ChatTutor] Received empty SSE data message from stream.");
-                continue;
-              }
               const data = JSON.parse(rawData);
-
               if (typeof data !== 'object' || data === null) {
                 console.warn("[ChatTutor] Received non-object SSE data from stream:", data);
                 setMessages(prev => prev.map(m =>
@@ -213,7 +212,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                   msg.id === currentAiMessageId ? {
                     ...msg,
                     text: currentAiMessageText || "[AI response finished]",
-                    references: (data.references && Array.isArray(data.references)) ? data.references : [],
+                    references: (data.references && Array.isArray(data.references)) ? data.references as Reference[] : [],
                     thinking: (data.thinking && typeof data.thinking === 'string') ? data.thinking : undefined,
                     isLoading: false
                   } : msg
@@ -251,7 +250,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         setMessages((prev) => prev.map(msg =>
           msg.id === currentAiMessageId ? {
             ...msg,
-            text: `Sorry, I encountered an error: ${errorMessage}`,
+            text: currentAiMessageText || `Sorry, I encountered an error: ${errorMessage}`,
             isError: true,
             isLoading: false
           } : msg
@@ -261,16 +260,15 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       abortControllerRef.current = null;
       setIsLoading(false);
       setThinkingMessage(null);
-      if (messages.find(m => m.id === currentAiMessageId && m.isLoading)) {
-        setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m));
-      }
+      // Ensure isLoading is set to false if it was still true
+      setMessages(prev => prev.map(m => m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m));
       setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
     }
   };
 
   const handleEditMessage = (messageId: string, newText: string) => {
     setMessages(prev => prev.map(m => m.id === messageId ? {...m, text: newText, isEdited: true, timestamp: new Date() } : m));
-    toast({ title: "Message Updated (Locally)", description: "Your message text has been updated in the chat display." });
+    toast({ title: "Message Updated", description: "Your message text has been updated in the chat display. This does not resend to the AI." });
   };
 
   const handleCopyMessage = (text: string) => {
@@ -291,7 +289,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
     setIsLoading(true);
     setChatStatusText("Starting new chat...");
-    onClearDocumentContext();
+    onClearDocumentContext(); // This will set documentName to null via AppContent
     try {
       const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString());
       if (result.error || !result.thread_id) {
@@ -333,7 +331,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setIsLoading(true);
     setChatStatusText(`Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
     setMessages([]);
-    onClearDocumentContext();
+    onClearDocumentContext(); 
     try {
       const result = await getThreadHistoryAction(user.token, threadIdToLoad);
       if (result.error) throw new Error(result.error);
@@ -343,7 +341,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         sender: msg.sender,
         text: msg.message_text,
         timestamp: new Date(msg.timestamp),
-        references: msg.references || [],
+        references: (msg.references && Array.isArray(msg.references)) ? msg.references : (msg.references_json ? JSON.parse(msg.references_json) : []),
         thinking: msg.thinking || msg.cot_reasoning,
         isEdited: msg.is_edited,
         isError: msg.is_error,
@@ -352,7 +350,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages(fetchedMessages);
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
-      setChatStatusText(`Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
+      // Determine if this thread was document-specific (heuristic, backend should ideally tell us)
+      // For now, assume general if no document context is actively re-established.
+      setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
       if (fetchedMessages.length === 0) {
           toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
           setMessages([{id: 'empty-thread-msg', sender: 'ai', text: "This chat is empty. Ask something!", timestamp: new Date()}]);
@@ -431,10 +431,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // Standard type
+        
+        // Ensure all tracks are stopped
         if (mediaRecorderRef.current?.stream) {
           mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
         }
+        mediaRecorderRef.current = null; // Clear the ref
 
         if (audioBlob.size === 0) {
             toast({title: "No audio recorded.", variant: "default"});
@@ -444,10 +447,10 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         }
 
         toast({title: "Transcribing audio..."});
-        setIsLoading(true);
+        setIsLoading(true); // Use general loading state for transcription
         setChatStatusText("Transcribing audio...");
         const formData = new FormData();
-        formData.append('audio', audioBlob, 'user_audio.webm');
+        formData.append('audio', audioBlob, 'user_audio.webm'); // Consistent filename
 
         try {
             if (!user.token) throw new Error("User token not found for transcription.");
@@ -464,7 +467,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
         } finally {
             setIsLoading(false);
-            setIsRecording(false);
+            setIsRecording(false); // Ensure recording state is reset
             setChatStatusText(documentName ? `Chatting about: ${documentName}` : "General Chat Mode");
         }
       };
@@ -482,7 +485,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
+      // Stream tracks are stopped in onstop
     }
+    // Note: setIsRecording(false) is handled in onstop to ensure it's only set after processing
   };
 
   return (
@@ -597,7 +602,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             size="icon"
             type="button"
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading || !isMediaRecorderSupported || !user.token}
+            disabled={isLoading || !isMediaRecorderSupported || !user.token} // Disable if general isLoading is true too
             title={!user.token ? "Login to use voice" : (isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported")}
             className={isRecording ? "text-destructive border-destructive animate-pulse" : ""}
           >
@@ -609,12 +614,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             className="flex-1"
-            disabled={isLoading || !user.token}
+            disabled={isLoading || !user.token || isRecording} // Disable if recording
           />
-          <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null} onClick={handleStopStream} title="Stop AI Response">
+          <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null || isRecording} onClick={handleStopStream} title="Stop AI Response">
             <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>
           </Button>
-          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token} className="btn-glow-primary-hover">
+          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token || isRecording} className="btn-glow-primary-hover">
             {isLoading && !isRecording ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
             <span className="sr-only">Send</span>
           </Button>

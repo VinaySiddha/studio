@@ -32,7 +32,6 @@ const Page: FC = () => {
   useEffect(() => {
     const storedToken = localStorage.getItem('aiTutorAuthToken');
     const storedUsername = localStorage.getItem('aiTutorUsername');
-    // Attempt to retrieve more user details if stored
     const storedUserDetails = localStorage.getItem('aiTutorUserDetails');
     let parsedUserDetails: Partial<User> = {};
     if (storedUserDetails) {
@@ -109,7 +108,7 @@ const Page: FC = () => {
   return (
     <div className="flex flex-col min-h-screen bg-background text-foreground font-body">
       <AppHeader user={user} onLogout={handleLogout} />
-      <main className="flex-grow container mx-auto px-4 py-8">
+      <main className="flex flex-col flex-grow container mx-auto px-4 py-8 overflow-hidden">
         {view === 'landing' && <LandingPage onShowLogin={() => setView('login')} onShowSignup={() => setView('signup')} />}
         {view === 'login' && <LoginForm onSubmit={handleLogin} onShowSignup={() => setView('signup')} error={authError} isLoading={isLoadingAuth && view === 'login'} />}
         {view === 'signup' && <SignupForm onSubmit={handleSignup} onShowLogin={() => setView('login')} error={authError} isLoading={isLoadingAuth && view === 'signup'} />}
