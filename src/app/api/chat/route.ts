@@ -2,114 +2,96 @@
 // src/app/api/chat/route.ts
 import {NextResponse} from 'next/server';
 import {z} from 'zod';
+import {ai} from '@/ai/genkit'; // Use the global Genkit AI instance
+import {prompt as chatTutorPrompt, ChatTutorInputSchema} from '@/ai/flows/chat-tutor'; // Import the prompt and input schema
 
 export const dynamic = 'force-dynamic'; // Ensures the route is not statically cached
 
-const FLASK_BACKEND_URL = process.env.NEXT_PUBLIC_FLASK_BACKEND_URL || 'http://localhost:5000';
-
-const ChatApiInputSchema = z.object({
-  query: z.string(),
-  documentContent: z.string().optional(),
-  threadId: z.string().optional().nullable(), // Allow null in addition to undefined
-  authToken: z.string().optional(),
-});
+// Updated schema: removed authToken as it's not directly used by Genkit call here
+const ApiRouteInputSchema = ChatTutorInputSchema.omit({ authToken: undefined }); // Or just redefine if simpler
 
 export async function POST(request: Request) {
-  console.log('[Next API /chat] Received request');
+  console.log('[Next API /chat - Genkit/Gemini] Received request');
+  let requestBody;
   try {
-    const body = await request.json();
-    const validation = ChatApiInputSchema.safeParse(body);
+    requestBody = await request.json();
+    const validation = ApiRouteInputSchema.safeParse(requestBody);
 
     if (!validation.success) {
-      console.error('[Next API /chat] Invalid input:', validation.error.format());
+      console.error('[Next API /chat - Genkit/Gemini] Invalid input:', validation.error.format());
       return NextResponse.json({error: 'Invalid input', details: validation.error.format()}, {status: 400});
     }
 
-    const {query, documentContent, threadId, authToken } = validation.data;
-    console.log(`[Next API /chat] Processing query: "${query}", doc: "${documentContent || 'None'}", thread: "${threadId || 'None'}"`);
+    const {query, documentContent, threadId } = validation.data;
+    console.log(`[Next API /chat - Genkit/Gemini] Processing query: "${query}", doc: "${documentContent || 'None'}", thread: "${threadId || 'None'}"`);
 
-    const flaskRequestBody = {
-      query: query,
-      documentContent: documentContent || "No document provided for context.",
-      thread_id: threadId, // Flask should handle null/undefined as needed for new threads
+    // Prepare input for the Genkit prompt
+    const promptInput = {
+      question: query,
+      documentContent: documentContent, // This will be the actual content or the placeholder string
+      threadId: threadId,
     };
 
-    const headersToFlask: HeadersInit = {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-    };
-    if (authToken) {
-      headersToFlask['Authorization'] = `Bearer ${authToken}`;
-    }
-
-    console.log(`[Next API /chat] Forwarding to Flask: ${FLASK_BACKEND_URL}/chat with body:`, JSON.stringify(flaskRequestBody));
-    console.log(`[Next API /chat] Auth token being sent to Flask: ${authToken ? 'Present' : 'Absent'}`);
-
-    const flaskResponse = await fetch(`${FLASK_BACKEND_URL}/chat`, {
-      method: 'POST',
-      headers: headersToFlask,
-      body: JSON.stringify(flaskRequestBody),
+    // Use Genkit to generate a streaming response
+    const {stream, response} = ai.generateStream({
+      prompt: chatTutorPrompt, // Use the imported prompt from chat-tutor.ts
+      input: promptInput,
+      // Potentially add model: 'googleai/gemini-1.5-flash-latest' here if you want to override the default from ai.ts
     });
 
-    console.log(`[Next API /chat] Flask response status: ${flaskResponse.status}`);
+    console.log('[Next API /chat - Genkit/Gemini] Gemini stream initiated.');
 
-    if (!flaskResponse.ok) {
-      let errorData;
-      try {
-        errorData = await flaskResponse.json();
-        console.error('[Next API /chat] Flask API error (JSON):', errorData);
-      } catch (e) {
-        const errorText = await flaskResponse.text();
-        console.error('[Next API /chat] Flask API error (Non-JSON):', errorText);
-        errorData = { message: errorText || `Flask API error! Status: ${flaskResponse.status}` };
-      }
-      return NextResponse.json({
-        error: errorData.message || errorData.error || 'Failed to connect to Flask chat API or Flask returned an error.',
-        flask_status: flaskResponse.status,
-        flask_response: errorData
-      }, {status: 502});
-    }
-
-    if (!flaskResponse.body) {
-        console.error('[Next API /chat] Flask response body is null, cannot stream.');
-        return NextResponse.json({error: 'Flask response body is null.'}, {status: 500});
-    }
-
-    console.log('[Next API /chat] Flask response OK, attempting to stream.');
-    const readableStream = new ReadableStream({
+    // Create a new ReadableStream to send back to the client
+    const clientReadableStream = new ReadableStream({
       async start(controller) {
-        const reader = flaskResponse.body!.getReader();
-        const decoder = new TextDecoder();
         try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) {
-              console.log('[Next API /chat] Flask stream ended.');
-              break;
+          for await (const chunk of stream) {
+            const textContent = chunk.text;
+            if (textContent) {
+              // SSE format: data: {"type": "chunk", "content": "..."}\n\n
+              const sseFormattedChunk = `data: ${JSON.stringify({type: 'chunk', content: textContent})}\n\n`;
+              controller.enqueue(new TextEncoder().encode(sseFormattedChunk));
             }
-            // console.log('[Next API /chat] Received chunk from Flask:', decoder.decode(value, {stream: true})); // Uncomment for deep debugging
-            controller.enqueue(value);
           }
+          
+          // After stream finishes, send a final message which can include threadId or other metadata.
+          // The 'response' promise from generateStream resolves after all chunks are processed.
+          const finalGenkitResponse = await response;
+          const finalOutput = finalGenkitResponse.output(); // This might be structured if prompt had output schema
+
+          console.log('[Next API /chat - Genkit/Gemini] Stream ended. Final Genkit Output:', finalOutput);
+
+          const finalMessage = {
+            type: 'final',
+            answer: finalOutput?.answer || "", // If output is structured, extract answer
+                                              // If not, the answer was built from chunks client-side.
+                                              // This final 'answer' here might be redundant if client already has full text.
+            threadId: threadId || finalOutput?.threadId, // Pass back threadId
+            references: finalOutput?.references || [],   // Pass back any structured references
+            thinking: finalOutput?.thinking,             // Pass back thinking process
+          };
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(finalMessage)}\n\n`));
+
         } catch (error: any) {
-          console.error('[Next API /chat] Error streaming from Flask to client:', error);
-          const errorEvent = `data: ${JSON.stringify({type: 'error', error: error.message || 'Streaming proxy error'})}\n\n`;
+          console.error('[Next API /chat - Genkit/Gemini] Error streaming from Genkit to client:', error);
+          const errorEvent = `data: ${JSON.stringify({type: 'error', error: error.message || 'Streaming error from Genkit/Gemini'})}\n\n`;
           try {
             controller.enqueue(new TextEncoder().encode(errorEvent));
           } catch (enqueueError) {
-            console.error("[Next API /chat] Error enqueuing error message to stream:", enqueueError);
+            console.error("[Next API /chat - Genkit/Gemini] Error enqueuing error message to stream:", enqueueError);
           }
         } finally {
           try {
             controller.close();
-            console.log('[Next API /chat] Stream controller closed.');
+            console.log('[Next API /chat - Genkit/Gemini] Stream controller closed.');
           } catch (closeError) {
-             console.error("[Next API /chat] Error closing stream controller:", closeError);
+             console.error("[Next API /chat - Genkit/Gemini] Error closing stream controller:", closeError);
           }
         }
       }
     });
 
-    return new Response(readableStream, {
+    return new Response(clientReadableStream, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -118,7 +100,10 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('[Next API /chat] Outer route error:', error);
+    console.error('[Next API /chat - Genkit/Gemini] Outer route error:', error);
+    if (error instanceof SyntaxError && error.message.includes("JSON")) {
+        return NextResponse.json({error: 'Invalid JSON in request body.' , details: error.message}, {status: 400});
+    }
     return NextResponse.json({error: error.message || 'An unexpected error occurred in /api/chat.'}, {status: 500});
   }
 }

@@ -22,7 +22,7 @@ import {
 import type { User } from '@/app/page';
 
 interface ChatTutorSectionProps {
-  documentName: string | null; 
+  documentName: string | null; // This will be the SECURED name for API calls or null for general chat
   user: User;
   onClearDocumentContext: () => void;
 }
@@ -32,6 +32,8 @@ interface Thread {
   title: string;
   last_updated: string; 
 }
+
+const GENERAL_QUERY_PLACEHOLDER = "No document provided for context.";
 
 const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onClearDocumentContext }) => {
   const [messages, setMessages] = useState<MessageType[]>([]);
@@ -44,7 +46,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const audioStreamRef = useRef<MediaStream | null>(null); // To hold the stream for stopping tracks
+  const audioStreamRef = useRef<MediaStream | null>(null);
 
   const [isSessionsDialogOpen, setIsSessionsDialogOpen] = useState(false);
   const [availableThreads, setAvailableThreads] = useState<Thread[]>([]);
@@ -88,13 +90,17 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages([{
         id: 'initial-bot-message',
         sender: 'ai',
-        text: documentName ? `Ask me anything about ${documentName}!` : "Upload or select a document to chat about, or ask a general question.",
+        text: documentName ? `Ask me anything about the selected document!` : "Upload or select a document to chat about, or ask a general question.",
         timestamp: new Date(),
       }]);
     }
-    setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
-  }, [documentName, user.token]); // Effect will re-run if documentName or user.token changes
+    // This effect updates status text based on documentName (which reflects chat mode)
+    const displayDocName = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+    setChatStatusText(displayDocName ? `Chatting about: ${displayDocName}` : "General Chat Mode");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentName, user.token]); // Only re-run if documentName (context) or user token changes
 
+  // Separate useEffect for scrolling, depends only on messages and thinkingMessage
   useEffect(() => {
     if (scrollAreaRef.current) {
       const scrollViewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
@@ -114,14 +120,58 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     }
   };
 
+  // To be called by AppContent when selectedDoc is cleared.
+  const resetToGeneralChat = useCallback(() => {
+        setMessages([{
+            id: 'general-chat-prompt',
+            sender: 'ai',
+            text: "Switched to General Chat Mode. How can I help you?",
+            timestamp: new Date(),
+        }]);
+        const displayDocName = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+        setChatStatusText(displayDocName ? `Chatting about: ${displayDocName}` : "General Chat Mode");
+  }, [documentName]); // documentName dependency to update status text correctly
+
+  useEffect(() => {
+    if (!documentName && currentThreadId) { // If document context is cleared but a thread exists
+        // Potentially fetch general history or just show a general prompt
+        // For now, let's assume onClearDocumentContext in AppContent handles resetting messages if needed
+        // Or, ChatTutorSection itself can reset to a general welcome for the current thread
+        // resetToGeneralChat(); // This might be too aggressive, let AppContent manage message reset
+    }
+    const displayDocName = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+    setChatStatusText(displayDocName ? `Chatting about: ${displayDocName}` : "General Chat Mode");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentName, resetToGeneralChat]);
+
+
+  // Dummy uploadedDocs state for status text until AppContent provides it
+  const [uploadedDocs, setUploadedDocs] = useState<{name: string, securedName: string}[]>([]);
+   useEffect(() => {
+    // In a real app, this would be fetched or passed as a prop
+    // For placeholder:
+    // setUploadedDocs([{name: "Sample Doc 1", securedName: "sample1_sec"}, {name: "Another PDF", securedName: "another_sec"}]);
+  }, []);
+
+
   const handleSendMessage = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const query = inputValue.trim();
     if (!query) return;
-    if (!user.token) {
-      toast({ variant: "destructive", title: "Error", description: "You must be logged in to chat." });
-      return;
+    
+    // API Key Check: Rely on server-side Genkit configuration.
+    // Client-side check for localStorage key is for UI feedback only.
+    if (!localStorage.getItem('userGoogleApiKey')) {
+        toast({
+            variant: "destructive",
+            title: "API Key Not Set",
+            description: "Please set your Google API Key in the 'API Key Manager' section before chatting with Gemini. This is a reminder to also set the server-side environment variable.",
+            duration: 7000,
+        });
+        // Optionally, do not proceed if you want to enforce this UI step.
+        // For now, we'll let it proceed, as the server-side env var is the critical one.
     }
+
 
     const userMessage: MessageType = {
       id: Date.now().toString() + '-user',
@@ -132,7 +182,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setIsLoading(true);
-    setChatStatusText("AI Tutor is thinking...");
+    const displayDocNameLoading = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+    setChatStatusText(displayDocNameLoading ? `AI thinking about ${displayDocNameLoading}...` : "AI Tutor is thinking...");
     setThinkingMessage("AI is preparing your response...");
 
     abortControllerRef.current = new AbortController();
@@ -150,9 +201,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     try {
       const requestBody = {
         query: query,
-        documentContent: documentName || "No document provided for context.", 
-        threadId: currentThreadId || undefined, 
-        authToken: user.token,
+        documentContent: documentName || GENERAL_QUERY_PLACEHOLDER, 
+        threadId: currentThreadId || undefined,
+        // No authToken here, /api/chat with Genkit doesn't need it for this specific purpose
       };
 
       const response = await fetch('/api/chat', {
@@ -185,21 +236,19 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
               data = JSON.parse(rawData);
             } catch (parseError: any) {
               console.error('[ChatTutor] Error parsing SSE JSON:', parseError.message, "Raw SSE part:", rawData);
-              setMessages(prev => prev.map(m =>
+              currentAiMessageText += `\n[Error processing response stream: malformed JSON chunk]`;
+               setMessages(prev => prev.map(m =>
                 m.id === currentAiMessageId ? {
-                  ...m,
-                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: malformed JSON chunk]`,
-                  isError: true, isLoading: false
+                  ...m, text: currentAiMessageText, isError: true, isLoading: false 
                 } : m));
               continue; 
             }
             if (typeof data !== 'object' || data === null) {
               console.warn("[ChatTutor] Received non-object or null SSE data from stream:", data);
-              setMessages(prev => prev.map(m =>
+              currentAiMessageText += `\n[Error processing response stream: unexpected data format]`;
+               setMessages(prev => prev.map(m =>
                 m.id === currentAiMessageId ? {
-                  ...m,
-                  text: (m.text === "..." ? "" : m.text) + `\n[Error processing response stream: unexpected data format]`,
-                  isError: true, isLoading: false
+                  ...m, text: currentAiMessageText, isError: true, isLoading: false 
                 } : m));
               continue;
             }
@@ -213,8 +262,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
               ));
             } else if (data.type === 'final') {
               currentAiMessageText = (data.answer && typeof data.answer === 'string' ? data.answer : currentAiMessageText) || "";
-              const finalThreadId = (data.thread_id && typeof data.thread_id === 'string' ? data.thread_id : null) || currentThreadId;
-
+              // The threadId update logic (if Genkit sends it back)
+              const finalThreadId = (data.threadId && typeof data.threadId === 'string' ? data.threadId : null) || currentThreadId;
               if (finalThreadId && finalThreadId !== currentThreadId) {
                 setCurrentThreadId(finalThreadId);
                 localStorage.setItem('aiTutorThreadId', finalThreadId);
@@ -228,12 +277,13 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
                   isLoading: false
                 } : msg
               ));
-              setIsLoading(false);
-              setThinkingMessage(null);
-              setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
             } else if (data.type === 'error') {
               const errorMessageContent = (data.error && typeof data.error === 'string') ? data.error : ((data.message && typeof data.message === 'string') ? data.message : 'Stream error from server.');
-              throw new Error(errorMessageContent);
+              currentAiMessageText += `\n[Error from AI: ${errorMessageContent}]`;
+               setMessages(prev => prev.map(m =>
+                m.id === currentAiMessageId ? {
+                  ...m, text: currentAiMessageText, isError: true, isLoading: false
+                } : m));
             } else {
               console.warn("[ChatTutor] Received SSE data with unknown type or structure from stream:", data);
             }
@@ -246,10 +296,11 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       } else {
         console.error('Error fetching AI response:', error);
         const errorMessage = String(error.message || 'Unknown chat error');
+        currentAiMessageText += `\n[Error: ${errorMessage}]`;
         setMessages((prev) => prev.map(msg =>
           msg.id === currentAiMessageId ? {
             ...msg,
-            text: ((msg.text === "..." ? "" : msg.text) || `Sorry, I encountered an error: ${errorMessage}`),
+            text: currentAiMessageText || `Sorry, I encountered an error: ${errorMessage}`,
             isError: true,
             isLoading: false
           } : msg
@@ -259,16 +310,15 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       abortControllerRef.current = null;
       setIsLoading(false);
       setThinkingMessage(null);
-      // Ensure isLoading is false for the specific AI message
       setMessages(prev => prev.map(m => 
         m.id === currentAiMessageId && m.isLoading ? {...m, isLoading: false, text: m.text === "..." ? "[Response incomplete or error]" : m.text } : m
       ));
-      setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
+      const displayDocNameFinally = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+      setChatStatusText(displayDocNameFinally ? `Chatting about: ${displayDocNameFinally}` : "General Chat Mode");
     }
   };
 
   const handleEditMessage = (messageId: string, newText: string) => {
-    // UI-only edit for now. To resend to AI, this would need to trigger handleSendMessage
     setMessages(prev => prev.map(m => m.id === messageId ? {...m, text: newText, isEdited: true, timestamp: new Date() } : m));
     toast({ title: "Message Updated", description: "Your message text has been updated in the chat display. This does not resend to the AI." });
   };
@@ -285,28 +335,24 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   };
 
   const handleNewChat = async () => {
-    if (!user.token) {
-        toast({variant: "destructive", title: "Error", description: "Login to start a new chat."});
-        return;
-    }
     setIsLoading(true);
     setChatStatusText("Starting new chat...");
-    onClearDocumentContext(); 
+    onClearDocumentContext(); // This will trigger documentName prop to become null
     try {
-      const result = await createNewChatThreadAction(user.token, "New Chat " + new Date().toLocaleTimeString());
-      if (result.error || !result.thread_id) {
-        throw new Error(result.error || "Failed to create new thread on Flask backend.");
-      }
-      setCurrentThreadId(result.thread_id);
-      localStorage.setItem('aiTutorThreadId', result.thread_id);
+      // Now using Genkit, thread creation might be implicit or handled differently by /api/chat.
+      // For now, let's just clear client-side state for a "new chat" feel.
+      // If Genkit flow needs explicit thread creation, /api/chat should handle it.
+      const newThreadId = `genkit-thread-${Date.now()}`; // Simulate a new thread ID client-side for now
+      setCurrentThreadId(newThreadId);
+      localStorage.setItem('aiTutorThreadId', newThreadId);
       setMessages([{
-        id: 'new-chat-initial-msg-' + result.thread_id,
+        id: 'new-chat-initial-msg-' + newThreadId,
         sender: 'ai',
-        text: "New chat session started. How can I help you?",
+        text: "New chat session started with Gemini. How can I help you?",
         timestamp: new Date(),
       }]);
-      setChatStatusText(`General Chat Mode (Thread: ${result.thread_id.substring(0,8)}...)`);
-      toast({ title: "New Chat Started" });
+      // Status text will be updated by useEffect based on documentName prop
+      toast({ title: "New Chat Started (Gemini)" });
     } catch (error: any) {
       toast({ variant: "destructive", title: "New Chat Error", description: error.message });
       setChatStatusText("Error starting new chat.");
@@ -316,24 +362,29 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   };
 
   const handleShowSessions = async () => {
-    if (!user.token) {
-      toast({ variant: "destructive", title: "Error", description: "Login to view sessions." });
-      return;
+    if (!user.token) { // Auth token might not be needed for Genkit sessions if not implemented
+      // toast({ variant: "destructive", title: "Error", description: "Login to view sessions." });
+      // return;
     }
     setIsLoadingThreads(true);
     setIsSessionsDialogOpen(true);
-    await fetchThreads(true); // Pass true to show toast if empty
+    // Fetching threads might change if Genkit handles session history differently
+    // For now, assume listChatThreadsAction is still relevant or adapt as needed
+    await fetchThreads(true); 
   };
 
   const loadChatHistory = async (threadIdToLoad: string) => {
-    if (!user.token) {
-      toast({ variant: "destructive", title: "Authentication Error", description: "Cannot load history." });
-      return;
+    // This function may need to be adapted if chat history is managed by Genkit/Gemini differently
+    // For now, assuming it still loads from a source compatible with listChatThreadsAction
+    if (!user.token) { 
+      // toast({ variant: "destructive", title: "Authentication Error", description: "Cannot load history." });
+      // return;
     }
     setIsLoading(true);
-    setChatStatusText(`Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
+    const displayDocNameLoadingHist = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+    setChatStatusText(displayDocNameLoadingHist ? `Loading history for ${displayDocNameLoadingHist}... (Thread: ${threadIdToLoad.substring(0,8)})` : `Loading history for thread ${threadIdToLoad.substring(0,8)}...`);
     setMessages([]);
-    onClearDocumentContext(); 
+    // onClearDocumentContext(); // Do not clear document context when loading history for that context
     try {
       const result = await getThreadHistoryAction(user.token, threadIdToLoad);
       if (result.error) throw new Error(result.error);
@@ -352,7 +403,8 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       setMessages(fetchedMessages);
       setCurrentThreadId(threadIdToLoad);
       localStorage.setItem('aiTutorThreadId', threadIdToLoad);
-      setChatStatusText(`General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`); // Default to general after load
+      const displayDocNameLoadedHist = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+      setChatStatusText(displayDocNameLoadedHist ? `Chatting about: ${displayDocNameLoadedHist} (Thread: ${threadIdToLoad.substring(0,8)})` : `General Chat Mode (Thread: ${threadIdToLoad.substring(0,8)}...)`);
       if (fetchedMessages.length === 0) {
           toast({ title: "Empty Thread", description: "This chat session has no messages yet." });
           setMessages([{id: 'empty-thread-msg', sender: 'ai', text: "This chat is empty. Ask something!", timestamp: new Date()}]);
@@ -404,9 +456,9 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
           setCurrentThreadId(null);
           localStorage.removeItem('aiTutorThreadId');
           setMessages([{id: 'deleted-thread-msg', sender: 'ai', text: "Current chat session was deleted. Start a new one or load another.", timestamp: new Date()}]);
-          onClearDocumentContext(); // Reset document context if current thread deleted
+          onClearDocumentContext(); 
         }
-        await fetchThreads(); // Refresh the list of threads
+        await fetchThreads(); 
       } else {
         throw new Error(result.error || "Failed to delete thread.");
       }
@@ -417,7 +469,7 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
   };
 
   const startRecording = async () => {
-    if (!isMediaRecorderSupported || !user.token) {
+    if (!isMediaRecorderSupported) { // Removed user.token check as Genkit handles auth via env var for Gemini
       toast({title: "Voice input not available or not logged in.", variant: "destructive"});
       return;
     }
@@ -431,23 +483,23 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // or audio/ogg for opus, audio/wav
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); 
         
-        // Stop media tracks after blob creation
         if (audioStreamRef.current) {
           audioStreamRef.current.getTracks().forEach(track => track.stop());
           audioStreamRef.current = null;
         }
-        mediaRecorderRef.current = null; 
+        // mediaRecorderRef.current = null; // This might be premature if onstop is re-entrant or error occurs later
 
         setIsLoading(true); 
         setChatStatusText("Transcribing audio...");
-        setIsRecording(false); 
-
+        
         if (audioBlob.size === 0) {
             toast({title: "No audio recorded.", variant: "default"});
             setIsLoading(false);
-            setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
+            setIsRecording(false);
+            const displayDocNameRec = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+            setChatStatusText(displayDocNameRec ? `Chatting about: ${displayDocNameRec}` : "General Chat Mode");
             return;
         }
         
@@ -456,8 +508,12 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         formData.append('audio', audioBlob, 'user_audio.webm');
 
         try {
-            if (!user.token) throw new Error("User token not found for transcription.");
+            // Transcription might now be a Genkit flow or still a Flask endpoint.
+            // Assuming transcribeAudioAction is updated or replaced if needed.
+            // For now, user.token is still passed, assuming Flask endpoint for transcription.
+            if (!user.token) throw new Error("User token not found for transcription if using Flask for transcription.");
             const result = await transcribeAudioAction(user.token, formData);
+
             if (result.text) {
                 setInputValue(prev => (prev ? prev + " " : "") + result.text);
                 toast({title: "Transcription complete."});
@@ -470,7 +526,10 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             toast({title: "Transcription Failed", description: transcriptionError.message, variant: "destructive"});
         } finally {
             setIsLoading(false);
-            setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
+            setIsRecording(false); // Ensure this is set here
+            mediaRecorderRef.current = null; // Also clear here
+            const displayDocNameRecFin = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+            setChatStatusText(displayDocNameRecFin ? `Chatting about: ${displayDocNameRecFin}` : "General Chat Mode");
         }
       };
       mediaRecorderRef.current.start();
@@ -479,24 +538,32 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
     } catch (err: any) {
       console.error("Error starting recording:", err);
       toast({title: "Microphone Error", description: `Could not access microphone: ${err.message}`, variant: "destructive"});
-      setChatStatusText("Mic access denied.");
-      setIsRecording(false);
-      if (audioStreamRef.current) { // Clean up if stream was obtained but recorder failed
+      if (audioStreamRef.current) { 
         audioStreamRef.current.getTracks().forEach(track => track.stop());
         audioStreamRef.current = null;
       }
+      setIsRecording(false); // Reset recording state on error
+      mediaRecorderRef.current = null; // Clear recorder instance on error
+      const displayDocNameRecErr = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+      setChatStatusText(displayDocNameRecErr ? `Chatting about: ${displayDocNameRecErr}` : "General Chat Mode");
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      // onstop will handle setIsRecording(false) and other cleanup
-    } else if (audioStreamRef.current) { // Safety net if recording somehow didn't start but stream exists
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
-        audioStreamRef.current = null;
+      // onstop will handle setting isRecording to false and other UI updates
+    } else { // If somehow isRecording is false but stream/recorder exists
+        if (audioStreamRef.current) {
+            audioStreamRef.current.getTracks().forEach(track => track.stop());
+            audioStreamRef.current = null;
+        }
+        if (mediaRecorderRef.current) {
+            mediaRecorderRef.current = null;
+        }
         setIsRecording(false);
-        setChatStatusText(documentName ? `Context: Document Mode (${documentName.substring(0,20)}...)` : "General Chat Mode");
+        const displayDocNameStopRec = documentName ? (uploadedDocs.find(d => d.securedName === documentName)?.name || documentName.substring(0,20) + "...") : null;
+        setChatStatusText(displayDocNameStopRec ? `Chatting about: ${displayDocNameStopRec}` : "General Chat Mode");
     }
   };
 
@@ -506,16 +573,16 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center text-xl font-headline">
             <MessageSquare className="mr-2 h-6 w-6 text-primary" />
-            Chat Tutor
+            Chat with Gemini
             {currentThreadId && <span className="ml-2 text-xs text-muted-foreground">(Thread: {currentThreadId.substring(0,8)}...)</span>}
           </CardTitle>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleNewChat} title="Start a new chat session" disabled={!user.token || isLoading}>
+            <Button variant="outline" size="sm" onClick={handleNewChat} title="Start a new chat session" disabled={isLoading}>
               <Files className="mr-1 h-4 w-4" /> New Chat
             </Button>
             <Dialog open={isSessionsDialogOpen} onOpenChange={setIsSessionsDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" onClick={handleShowSessions} title="View previous chat sessions" disabled={!user.token || isLoading}>
+                <Button variant="outline" size="sm" onClick={handleShowSessions} title="View previous chat sessions" disabled={isLoading}>
                   <History className="mr-1 h-4 w-4" /> Sessions
                 </Button>
               </DialogTrigger>
@@ -612,24 +679,24 @@ const ChatTutorSection: FC<ChatTutorSectionProps> = ({ documentName, user, onCle
             size="icon"
             type="button"
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading || !isMediaRecorderSupported || !user.token}
-            title={!user.token ? "Login to use voice" : (isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported")}
+            disabled={isLoading || !isMediaRecorderSupported} // Removed user.token check
+            title={isMediaRecorderSupported ? (isRecording ? "Stop Recording" : "Start Voice Input") : "Voice input not supported"}
             className={isRecording ? "text-destructive border-destructive animate-pulse" : ""}
           >
             <Mic className="h-4 w-4" /> <span className="sr-only">Voice Input</span>
           </Button>
           <Input
             type="text"
-            placeholder={documentName ? `Ask about ${documentName.substring(0,20)}...` : "Ask a general question..."}
+            placeholder={documentName ? `Ask Gemini about ${uploadedDocs.find(d => d.securedName === documentName)?.name || "the document"}...` : "Ask Gemini a general question..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             className="flex-1"
-            disabled={isLoading || !user.token || isRecording} 
+            disabled={isLoading || isRecording} 
           />
           <Button variant="outline" size="icon" type="button" disabled={!isLoading || abortControllerRef.current === null || isRecording} onClick={handleStopStream} title="Stop AI Response">
             <StopCircle className="h-4 w-4" /> <span className="sr-only">Stop</span>
           </Button>
-          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || !user.token || isRecording} className="btn-glow-primary-hover">
+          <Button type="submit" size="icon" disabled={isLoading || !inputValue.trim() || isRecording} className="btn-glow-primary-hover">
             {isLoading && !isRecording ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
             <span className="sr-only">Send</span>
           </Button>
