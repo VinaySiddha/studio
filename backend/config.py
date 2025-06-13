@@ -1,4 +1,3 @@
-
 import os
 from dotenv import load_dotenv
 import logging
@@ -16,17 +15,17 @@ load_dotenv(dotenv_path=dotenv_path)
 # Ollama Configuration
 # Define multiple Ollama base URLs for load balancing
 # OLLAMA_BASE_URLS = [
-#     'https://c678-61-0-228-101.ngrok-free.app/'
+    # 'https://c678-61-0-228-101.ngrok-free.app/'
     #'http://172.180.9.187:11434',
     #'http://172.180.9.187:11435',
     #'http://172.180.9.187:11436',
     #'http://172.180.9.187:11437'
 # ]
 OLLAMA_BASE_URLS = [
-    'http://localhost:11434',
-    'http://localhost:11434',
-    'http://localhost:11434',
-    'http://localhost:11434'
+    'http://localhost:11436',
+    'http://localhost:11436',
+    'http://localhost:11436',
+    'http://localhost:11436'
 ]
 
 #OLLAMA_BASE_URLS = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
@@ -79,7 +78,7 @@ ANALYSIS_MAX_CONTEXT_LENGTH = int(os.getenv('ANALYSIS_MAX_CONTEXT_LENGTH', 10000
 
 # Chat & History Configuration
 SUMMARY_BUFFER_TOKEN_LIMIT = int(os.getenv('SUMMARY_BUFFER_TOKEN_LIMIT', 800))
-GENERAL_QUERY_PLACEHOLDER = "No document provided for context." # Define placeholder for general queries
+
 
 # Logging Configuration
 LOGGING_LEVEL_NAME = os.getenv('LOGGING_LEVEL', 'INFO').upper()
@@ -340,6 +339,3 @@ def setup_logging():
     logger.debug(f"SUMMARY_BUFFER_TOKEN_LIMIT={SUMMARY_BUFFER_TOKEN_LIMIT}")
     logger.debug(f"NOUGAT_MODEL_TAG={NOUGAT_MODEL_TAG}")
     logger.debug(f"NOUGAT_CHECKPOINT_PATH={NOUGAT_CHECKPOINT_PATH}")
-    logger.debug(f"GENERAL_QUERY_PLACEHOLDER='{GENERAL_QUERY_PLACEHOLDER}'")
-
-    
