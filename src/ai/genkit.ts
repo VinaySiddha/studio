@@ -8,10 +8,21 @@ export const ai = genkit({
   plugins: [
     googleAI({
       // apiKey: process.env.GOOGLE_API_KEY // This is picked up automatically by the plugin if GOOGLE_API_KEY env var is set.
-                                           // Explicitly setting it here is also an option if you prefer.
     }),
   ],
-  // Default model for Genkit operations, can be overridden in specific calls.
-  // Using a Gemini 1.5 Flash model for cost-effectiveness and speed.
+  // Default model for Genkit operations
   model: 'googleai/gemini-1.5-flash-latest', 
+  // Enable telemetry and tracing for better observability, especially during development.
+  // In production, you might configure a different logger or exporter.
+  // telemetry: {
+  //   instrumentation: {
+  //     llm: true, // Instrument LLM calls
+  //     flow: true, // Instrument flows
+  //   },
+  //   logger: console, // Use console logger for dev
+  // },
+  // Set a default temperature for generations if desired
+  // generationConfig: {
+  //   temperature: 0.7,
+  // },
 });

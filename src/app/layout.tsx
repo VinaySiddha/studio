@@ -2,13 +2,13 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import ClientToaster from '@/components/client-toaster'; // Changed import
+import ClientToaster from '@/components/client-toaster';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: 'Local AI Engineering Tutor',
-  description: 'Interface for interacting with local AI models for engineering education.',
+  title: 'Genkit AI Chatbot',
+  description: 'A simple chatbot interface using Genkit and Next.js',
 };
 
 export default function RootLayout({
@@ -18,9 +18,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} font-sans antialiased bg-background text-foreground overflow-hidden`}>
+      <body className={`${inter.variable} font-sans antialiased bg-background text-foreground`}>
         {children}
-        <ClientToaster /> {/* Use the client-side wrapper */}
+        <ClientToaster />
       </body>
     </html>
   );

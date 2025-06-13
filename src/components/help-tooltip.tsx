@@ -1,2 +1,7 @@
-// This component is no longer used in the simplified version.
-// Help tooltip has been removed.
+
+// This component is not used in the simplified version.
+// Keeping as a placeholder.
+'use client';
+import type { FC } from 'react';
+const HelpTooltipPlaceholder: FC = () => null;
+export default HelpTooltipPlaceholder;

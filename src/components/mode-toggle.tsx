@@ -1,5 +1,6 @@
-// This component is not used in the restored "Local AI Engineering Tutor" UI.
-// Chat mode is managed within AppContent.
+
+// This component is not used in the simplified version.
+// Keeping as a placeholder.
 'use client';
 import type { FC } from 'react';
 

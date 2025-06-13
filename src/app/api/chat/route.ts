@@ -1,83 +1,70 @@
-// src/app/api/chat/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
+import { ai } from '@/ai/genkit';
+import { geminiChatPrompt, GeminiChatInputSchema } from '@/ai/flows/contextual-chat'; // Using the simplified flow
 import { z } from 'zod';
 
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'; // Ensures the route is not statically cached
 
-// This should match the URL of your Flask backend
-const FLASK_BACKEND_CHAT_URL = process.env.FLASK_BACKEND_URL ? `${process.env.FLASK_BACKEND_URL}/chat` : 'http://localhost:5000/chat';
-
-// Schema for the request body to this Next.js API route
-const NextApiChatInputSchema = z.object({
+// Define the input schema for this API route
+const ApiRouteInputSchema = z.object({
   query: z.string(),
-  documentContent: z.string().optional().nullable(), // Name of the document or placeholder
-  threadId: z.string().optional().nullable(),
-  authToken: z.string(), // User's auth token for Flask backend
+  history: z.array(z.object({
+    role: z.enum(['user', 'model']),
+    content: z.string(),
+  })).optional(),
+  // documentContent and threadId removed as they are not used in the simplified flow
 });
 
 export async function POST(request: NextRequest) {
-  console.log('[Next API /chat -> Flask] Received request');
-  let requestBodyFromClient;
-
   try {
-    requestBodyFromClient = await request.json();
-    const validation = NextApiChatInputSchema.safeParse(requestBodyFromClient);
+    const reqBody = await request.json();
+    const validation = ApiRouteInputSchema.safeParse(reqBody);
 
     if (!validation.success) {
-      console.error('[Next API /chat -> Flask] Invalid input from client:', validation.error.format());
-      return NextResponse.json({ error: 'Invalid input to Next.js API route', details: validation.error.format() }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid input', details: validation.error.format() }, { status: 400 });
     }
 
-    const { query, documentContent, threadId, authToken } = validation.data;
-    
-    console.log(`[Next API /chat -> Flask] Processing query: "${query.substring(0, 50)}..."`);
-    console.log(`[Next API /chat -> Flask] Document Context: ${documentContent}`);
-    console.log(`[Next API /chat -> Flask] Thread ID: ${threadId}`);
+    const { query, history } = validation.data;
 
-    const flaskRequestBody = {
-      query,
-      documentContent: documentContent, // Flask expects this field name
-      thread_id: threadId, // Flask expects thread_id
-    };
+    const genkitInput = { query, history: history || [] };
 
-    const flaskResponse = await fetch(FLASK_BACKEND_CHAT_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`, // Pass token to Flask
+    // Use ai.generateStream with the defined prompt
+    const { stream, response } = ai.generateStream({
+      prompt: geminiChatPrompt, // Use the imported prompt object
+      input: genkitInput,
+      // You can specify a model here if you want to override the default in genkit.ts
+      // model: ai.model('googleai/gemini-1.5-flash-latest'), 
+      config: {
+        // Add any specific Genkit config here, e.g., safetySettings if needed
       },
-      body: JSON.stringify(flaskRequestBody),
-      // IMPORTANT: Duplex must be 'half' for streaming with undici/Node.js 18+
-      // However, for Next.js Edge/Vercel, this might not be needed or allowed.
-      // If running in Node.js env, and fetch is from undici, 'half' is necessary.
-      // For Vercel, this option might cause issues. Let's assume standard fetch for now.
-      // duplex: 'half', // Uncomment if needed for your specific Node.js fetch version
+    });
+    
+    // Create a new ReadableStream to forward the Genkit stream
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            const content = chunk.text();
+            if (content) {
+              controller.enqueue(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
+            }
+          }
+          // After all chunks, wait for the full response to potentially get structured output
+          const finalOutput = await response;
+          const fullAnswer = finalOutput.text(); // or finalOutput.output() if schema was used in prompt
+          
+          controller.enqueue(`data: ${JSON.stringify({ type: 'final', answer: fullAnswer, references: finalOutput.output()?.references, thinking: finalOutput.output()?.thinking })}\n\n`);
+          controller.close();
+        } catch (err: any) {
+          console.error('Streaming error:', err);
+          controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: err.message || 'Error streaming response' })}\n\n`);
+          controller.error(err);
+        }
+      },
     });
 
-    console.log(`[Next API /chat -> Flask] Flask response status: ${flaskResponse.status}`);
-
-    if (!flaskResponse.ok) {
-      let errorBody = 'Failed to get response from Flask backend.';
-      try {
-        const flaskError = await flaskResponse.json();
-        errorBody = flaskError.error || flaskError.message || JSON.stringify(flaskError);
-      } catch (e) {
-        errorBody = await flaskResponse.text();
-      }
-      console.error(`[Next API /chat -> Flask] Error from Flask: ${flaskResponse.status}`, errorBody);
-      return NextResponse.json({ error: 'Error from AI backend', details: errorBody }, { status: flaskResponse.status });
-    }
-
-    if (!flaskResponse.body) {
-      console.error('[Next API /chat -> Flask] Flask response body is null.');
-      return NextResponse.json({ error: 'AI backend returned no content.' }, { status: 500 });
-    }
-
-    // Forward the stream from Flask to the client
-    const stream = flaskResponse.body;
-    
-    return new Response(stream, {
-      status: 200,
+    return new Response(readableStream, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -86,16 +73,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('[Next API /chat -> Flask] Outer route error:', error);
-    let errorMessage = 'An unexpected error occurred in /api/chat.';
-    if (error instanceof SyntaxError && error.message.includes("JSON")) {
-        errorMessage = 'Invalid JSON in request body to Next.js API route.';
-        return NextResponse.json({ error: errorMessage, details: error.message }, { status: 400 });
-    }
-    if (error.code === 'ECONNREFUSED') {
-        errorMessage = `Connection to Flask backend (${FLASK_BACKEND_CHAT_URL}) refused. Is the Flask server running?`;
-        return NextResponse.json({ error: "AI service connection failed.", details: errorMessage}, {status: 503});
-    }
-    return NextResponse.json({ error: errorMessage, details: error.message }, { status: 500 });
+    console.error('API route error:', error);
+    return NextResponse.json({ error: 'Failed to process chat request', details: error.message }, { status: 500 });
   }
 }
